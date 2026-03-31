@@ -1,0 +1,63 @@
+import enum
+from datetime import date, datetime
+from decimal import Decimal
+from typing import TYPE_CHECKING
+
+from sqlalchemy import BigInteger, Date, DateTime, Enum, ForeignKey, Numeric, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.base import Base, TimestampMixin
+
+if TYPE_CHECKING:
+    from app.db.models.user import User
+    from app.db.models.order_file import OrderFile
+    from app.db.models.solution_file import SolutionFile
+    from app.db.models.bid import Bid
+    from app.db.models.review import Review
+    from app.db.models.message import Message
+    from app.db.models.operator_note import OperatorNote
+
+
+class OrderStatus(str, enum.Enum):
+    pending = "На рассмотрении"
+    awaiting_payment = "Ожидает оплаты"
+    in_progress = "В работе"
+    completed = "Выполнено"
+    cancelled = "Отменено"
+
+
+class Order(Base, TimestampMixin):
+    __tablename__ = "orders"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    operator_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    status: Mapped[OrderStatus] = mapped_column(
+        Enum(OrderStatus, name="orderstatus"),
+        nullable=False,
+        default=OrderStatus.pending,
+    )
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deadline: Mapped[date | None] = mapped_column(Date, nullable=True)
+    budget: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    auction_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payment_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    payment_invoice_id: Mapped[str | None] = mapped_column(
+        String(64), unique=True, nullable=True
+    )
+    # message_id of the notification card posted to the operator group
+    group_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    client: Mapped["User"] = relationship("User", foreign_keys=[client_id], back_populates="client_orders")
+    operator: Mapped["User | None"] = relationship(
+        "User", foreign_keys=[operator_id], back_populates="operator_orders"
+    )
+    files: Mapped[list["OrderFile"]] = relationship("OrderFile", back_populates="order")
+    solution_files: Mapped[list["SolutionFile"]] = relationship("SolutionFile", back_populates="order")
+    bids: Mapped[list["Bid"]] = relationship("Bid", back_populates="order")
+    reviews: Mapped[list["Review"]] = relationship("Review", back_populates="order")
+    messages: Mapped[list["Message"]] = relationship("Message", back_populates="order")
+    notes: Mapped[list["OperatorNote"]] = relationship("OperatorNote", back_populates="order")
