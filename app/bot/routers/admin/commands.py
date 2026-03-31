@@ -4,6 +4,8 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.filters import IsAdmin
+from app.db.models.order import OrderStatus
+from app.db.models.order_log import OrderLogAction
 from app.db.models.user import UserRole
 from app.repositories.order_repo import OrderRepo
 from app.repositories.user_repo import UserRepo
@@ -45,7 +47,7 @@ async def cmd_add_operator(message: Message, session: AsyncSession):
 async def cmd_delete_operator(message: Message, session: AsyncSession):
     args = (message.text or "").split(maxsplit=1)
     if len(args) < 2:
-        await message.answer("Использование: /deleteoperator @username")
+        await message.answer("Использование: /deleteoperator @username или /deleteoperator {telegram_id}")
         return
 
     target = args[1].strip()
@@ -65,6 +67,16 @@ async def cmd_delete_operator(message: Message, session: AsyncSession):
 
     if user.role != UserRole.operator:
         await message.answer(f"ℹ️ {user.full_name} не является оператором")
+        return
+
+    # Guard: cannot remove operator with active assigned orders
+    active = await OrderRepo(session).get_operator_active_orders(user.id)
+    if active:
+        ids = ", ".join(str(o.id) for o in active)
+        await message.answer(
+            f"⚠️ Нельзя удалить оператора — у него {len(active)} активных заявок: №{ids}\n"
+            "Сначала переназначьте или завершите их"
+        )
         return
 
     await repo.set_role(user, UserRole.client)
@@ -118,11 +130,24 @@ async def cmd_end_auction(message: Message, session: AsyncSession):
         return
 
     order_id = int(args[1].strip())
+    order = await OrderRepo(session).get_by_id(order_id)
+    if not order:
+        await message.answer("❌ Заявка не найдена")
+        return
+    if order.status != OrderStatus.pending:
+        await message.answer(f"⚠️ Заявка №{order_id} не в статусе «На рассмотрении» (статус: {order.status.value})")
+        return
+
     from app.services.auction_service import AuctionService
     from app.bot.instance import bot
 
+    # Resolve admin user id for log
+    from app.repositories.user_repo import UserRepo
+    admin = await UserRepo(session).get_by_telegram_id(message.from_user.id)
+    actor_id = admin.id if admin else None
+
     auction = AuctionService(session=session, bot=bot)
-    await auction.close_auction(order_id)
+    await auction.close_auction(order_id, actor_id=actor_id)
     await message.answer(f"✅ Аукцион по заявке №{order_id} завершён")
 
 
@@ -134,21 +159,30 @@ async def cmd_confirm_payment(message: Message, session: AsyncSession):
         return
 
     order_id = int(args[1].strip())
-    order = await OrderRepo(session).get_by_id(order_id)
+    order_repo = OrderRepo(session)
+    order = await order_repo.get_by_id_for_update(order_id)
     if not order:
         await message.answer("❌ Заявка не найдена")
         return
 
-    from app.db.models.order import OrderStatus
     if order.status != OrderStatus.awaiting_payment:
         await message.answer(f"⚠️ Заявка №{order_id} не ожидает оплаты (статус: {order.status.value})")
         return
 
-    await OrderRepo(session).update_status(order, OrderStatus.in_progress)
+    from datetime import datetime, timezone
+    await order_repo.update_status(order, OrderStatus.in_progress)
+    order.payment_confirmed_at = datetime.now(timezone.utc)
+    await session.flush()
+
+    from app.repositories.user_repo import UserRepo
+    admin = await UserRepo(session).get_by_telegram_id(message.from_user.id)
+    actor_id = admin.id if admin else None
+    await order_repo.add_log(
+        order_id=order_id, actor_id=actor_id,
+        action=OrderLogAction.payment_confirmed,
+    )
 
     from app.bot.instance import bot
-    from app.repositories.user_repo import UserRepo
-
     client = await UserRepo(session).get_by_id(order.client_id)
     if client:
         try:
@@ -173,6 +207,48 @@ async def cmd_confirm_payment(message: Message, session: AsyncSession):
     await message.answer(f"✅ Заявка №{order_id} переведена в статус «В работе»")
 
 
+@router.message(Command("completeorder"), IsAdmin())
+async def cmd_complete_order(message: Message, session: AsyncSession):
+    """Admin can forcibly complete an order."""
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2 or not args[1].strip().isdigit():
+        await message.answer("Использование: /completeorder {order_id}")
+        return
+
+    order_id = int(args[1].strip())
+    order_repo = OrderRepo(session)
+    order = await order_repo.get_by_id_for_update(order_id)
+    if not order:
+        await message.answer("❌ Заявка не найдена")
+        return
+    if order.status != OrderStatus.in_progress:
+        await message.answer(f"⚠️ Заявка №{order_id} не в работе (статус: {order.status.value})")
+        return
+
+    from app.repositories.user_repo import UserRepo
+    admin = await UserRepo(session).get_by_telegram_id(message.from_user.id)
+    actor_id = admin.id if admin else None
+
+    await order_repo.update_status(order, OrderStatus.completed)
+    await order_repo.add_log(
+        order_id=order_id, actor_id=actor_id, action=OrderLogAction.completed,
+        detail="Admin forced complete",
+    )
+
+    from app.bot.instance import bot
+    client = await UserRepo(session).get_by_id(order.client_id)
+    if client:
+        try:
+            await bot.send_message(
+                client.telegram_id,
+                f"🎉 Заявка №{order_id} выполнена!\n📂 Посмотрите в разделе «История заявок»",
+            )
+        except Exception:
+            pass
+
+    await message.answer(f"✅ Заявка №{order_id} завершена")
+
+
 @router.message(Command("commands"), IsAdmin())
 async def cmd_commands(message: Message):
     text = (
@@ -184,6 +260,7 @@ async def cmd_commands(message: Message):
         "/stats — статистика заявок\n"
         "/endauction {id} — завершить аукцион досрочно\n"
         "/confirmpayment {id} — подтвердить оплату вручную\n"
+        "/completeorder {id} — принудительно завершить заявку\n"
         "/commands — этот список"
     )
     await message.answer(text)

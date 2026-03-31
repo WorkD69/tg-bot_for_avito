@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 
 
 class MessageDirection(str, enum.Enum):
-    client_to_op = "client_to_op"
-    op_to_client = "op_to_client"
+    client_to_op = "client_to_operator"
+    op_to_client = "operator_to_client"
 
 
 class Message(Base, TimestampMixin):

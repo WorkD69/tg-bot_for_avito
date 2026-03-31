@@ -11,6 +11,12 @@ class NoteStates(StatesGroup):
 
 
 class MessagingStates(StatesGroup):
+    """Operator → client messaging."""
+    waiting_message = State()
+
+
+class ClientMessagingStates(StatesGroup):
+    """Client → operator messaging."""
     waiting_message = State()
 
 
@@ -21,3 +27,18 @@ class SolutionStates(StatesGroup):
 class ReviewStates(StatesGroup):
     waiting_rating = State()
     waiting_text = State()
+
+
+class RequisitesStates(StatesGroup):
+    """Operator sends payment requisites to client."""
+    waiting_text = State()
+
+
+class NegotiationStates(StatesGroup):
+    """Client proposes counter price / question."""
+    waiting_text = State()
+
+
+class CounterOfferStates(StatesGroup):
+    """Operator makes counter-offer to client."""
+    waiting_amount = State()

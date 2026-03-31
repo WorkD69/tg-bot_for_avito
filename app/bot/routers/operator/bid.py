@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot.filters import IsOperator
 from app.bot.keyboards.callbacks import OrderCB
 from app.bot.states.bid import BidStates
+from app.db.models.order import OrderStatus
 from app.db.models.user import User
 from app.repositories.order_repo import OrderRepo
 
@@ -26,19 +27,25 @@ async def start_bid(
     if not order:
         await callback.answer("❌ Заявка не найдена", show_alert=True)
         return
+
+    # Guard: cannot bid on own order
+    if order.client_id == user.id:
+        await callback.answer("⚠️ Нельзя подавать ставку на собственную заявку", show_alert=True)
+        return
+
     if order.operator_id is not None:
         await callback.answer("⚠️ Заявка уже взята другим оператором", show_alert=True)
         return
 
-    from app.db.models.order import OrderStatus
     if order.status != OrderStatus.pending:
         await callback.answer("⏰ Аукцион по этой заявке уже завершён", show_alert=True)
         return
 
     await state.set_state(BidStates.waiting_price)
     await state.update_data(order_id=order.id)
+    from app.bot.formatters import _money
     await callback.message.answer(
-        f"📋 Заявка №{order.id} — бюджет клиента: {order.budget} ₽\n"
+        f"📋 Заявка №{order.id} — бюджет клиента: {_money(order.budget)}\n"
         "💰 Введите вашу ставку (число в рублях):"
     )
     await callback.answer()
@@ -50,7 +57,7 @@ async def got_bid_price(message: Message, state: FSMContext, session: AsyncSessi
         amount = Decimal(message.text.strip().replace(",", "."))
         if amount <= 0:
             raise ValueError
-    except (ValueError, Exception):
+    except (ValueError, InvalidOperation):
         await message.answer("❌ Введите положительное число, например 1200:")
         return
 

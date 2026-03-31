@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from app.db.models.review import Review
     from app.db.models.message import Message
     from app.db.models.operator_note import OperatorNote
+    from app.db.models.order_log import OrderLog
 
 
 class UserRole(str, enum.Enum):
@@ -38,6 +39,7 @@ class User(Base, TimestampMixin):
         "Order", foreign_keys="Order.operator_id", back_populates="operator"
     )
     bids: Mapped[list["Bid"]] = relationship("Bid", back_populates="operator")
-    reviews: Mapped[list["Review"]] = relationship("Review", back_populates="client")
+    reviews: Mapped[list["Review"]] = relationship("Review", foreign_keys="Review.client_id", back_populates="client")
     sent_messages: Mapped[list["Message"]] = relationship("Message", back_populates="sender")
     notes: Mapped[list["OperatorNote"]] = relationship("OperatorNote", back_populates="operator")
+    order_logs: Mapped[list["OrderLog"]] = relationship("OrderLog", back_populates="actor")

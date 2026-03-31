@@ -4,13 +4,12 @@ from app.bot.keyboards.callbacks import RatingCB, ReviewCB, ReviewListCB
 
 
 def rating_kb(order_id: int) -> InlineKeyboardMarkup:
-    """Star rating keyboard 1-5."""
-    stars = ["⭐", "⭐⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"]
+    """Numeric rating keyboard 1-5 (stars don't fit on one row)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=stars[i],
+                    text=f"{i + 1} ⭐",
                     callback_data=RatingCB(order_id=order_id, stars=i + 1).pack(),
                 )
                 for i in range(5)

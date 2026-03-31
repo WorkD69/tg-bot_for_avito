@@ -1,10 +1,10 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from app.bot.keyboards.callbacks import OrderCB
+from app.bot.keyboards.callbacks import NegotCB, OrderCB
 
 
 def group_new_order_kb(order_id: int) -> InlineKeyboardMarkup:
-    """Posted to operator group when a new order is created."""
+    """Posted to operator group when a new order is created or updated."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -36,7 +36,7 @@ def free_order_card_kb(order_id: int) -> InlineKeyboardMarkup:
 
 
 def my_order_card_kb(order_id: int) -> InlineKeyboardMarkup:
-    """Operator DM — assigned order card."""
+    """Operator DM — assigned order card (in_progress)."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -57,6 +57,100 @@ def my_order_card_kb(order_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text="Отправить решение",
                     callback_data=OrderCB(order_id=order_id, action="solution").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✅ Завершить заявку",
+                    callback_data=OrderCB(order_id=order_id, action="complete").pack(),
+                ),
+            ],
+        ]
+    )
+
+
+def awaiting_payment_operator_kb(order_id: int) -> InlineKeyboardMarkup:
+    """Operator DM — awaiting_payment card."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📤 Отправить реквизиты",
+                    callback_data=OrderCB(order_id=order_id, action="send_req").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Файлы",
+                    callback_data=OrderCB(order_id=order_id, action="files").pack(),
+                ),
+            ],
+        ]
+    )
+
+
+def send_requisites_kb(order_id: int) -> InlineKeyboardMarkup:
+    """Shortcut keyboard after operator assignment — one button to send requisites."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📤 Отправить реквизиты",
+                    callback_data=OrderCB(order_id=order_id, action="send_req").pack(),
+                )
+            ]
+        ]
+    )
+
+
+def client_awaiting_payment_kb(order_id: int) -> InlineKeyboardMarkup:
+    """Client DM — awaiting_payment card."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Я оплатил",
+                    callback_data=OrderCB(order_id=order_id, action="pay").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💬 Обсудить цену",
+                    callback_data=OrderCB(order_id=order_id, action="negotiate").pack(),
+                ),
+                InlineKeyboardButton(
+                    text="❌ Отменить заявку",
+                    callback_data=OrderCB(order_id=order_id, action="cancel").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="← Назад",
+                    callback_data=OrderCB(order_id=order_id, action="back_list").pack(),
+                ),
+            ],
+        ]
+    )
+
+
+def negot_operator_kb(order_id: int) -> InlineKeyboardMarkup:
+    """Operator response to client price negotiation."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Принять предложение",
+                    callback_data=NegotCB(order_id=order_id, action="accept").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💬 Встречная сумма",
+                    callback_data=NegotCB(order_id=order_id, action="counter").pack(),
+                ),
+                InlineKeyboardButton(
+                    text="❌ Отменить заявку",
+                    callback_data=NegotCB(order_id=order_id, action="cancel").pack(),
                 ),
             ],
         ]
@@ -88,7 +182,7 @@ def client_completed_order_kb(order_id: int) -> InlineKeyboardMarkup:
                 ),
                 InlineKeyboardButton(
                     text="💬 Задать вопрос",
-                    callback_data=OrderCB(order_id=order_id, action="msg").pack(),
+                    callback_data=OrderCB(order_id=order_id, action="client_msg").pack(),
                 ),
             ],
             [
@@ -121,13 +215,13 @@ def client_cancelled_order_kb(order_id: int) -> InlineKeyboardMarkup:
     )
 
 
-# Keep old name as alias for backward compat
+# Legacy alias
 def client_history_order_kb(order_id: int) -> InlineKeyboardMarkup:
     return client_completed_order_kb(order_id)
 
 
 def client_active_order_kb(order_id: int, can_cancel: bool) -> InlineKeyboardMarkup:
-    """Client DM — active order card (pending / awaiting_payment / in_progress)."""
+    """Client DM — active order card (pending / in_progress)."""
     rows = [
         [
             InlineKeyboardButton(
@@ -176,8 +270,8 @@ def cancel_confirm_kb(order_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def orders_list_kb(orders: list, *, finished: bool = False) -> InlineKeyboardMarkup:
-    """Inline list of orders — each row is one order button."""
+def orders_list_kb(orders: list) -> InlineKeyboardMarkup:
+    """Inline list of orders for operator — each row is one order button."""
     rows = []
     for order in orders:
         deadline_str = order.deadline.strftime("%d.%m") if order.deadline else "—"
@@ -194,7 +288,7 @@ def orders_list_kb(orders: list, *, finished: bool = False) -> InlineKeyboardMar
 
 
 def client_orders_list_kb(orders: list) -> InlineKeyboardMarkup:
-    """Client's active orders list — uses client_view action to avoid operator handler conflict."""
+    """Client's orders list — uses client_view action to avoid operator handler conflict."""
     rows = []
     for order in orders:
         deadline_str = order.deadline.strftime("%d.%m") if order.deadline else "—"

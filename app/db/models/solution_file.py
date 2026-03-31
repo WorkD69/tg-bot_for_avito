@@ -15,5 +15,6 @@ class SolutionFile(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), nullable=False, index=True)
     telegram_file_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(32), nullable=False, default="document")
 
     order: Mapped["Order"] = relationship("Order", back_populates="solution_files")

@@ -11,8 +11,10 @@ class PaymentService:
     def _md5(self, raw: str) -> str:
         return hashlib.md5(raw.encode()).hexdigest().upper()
 
-    def generate_link(self, order_id: int, amount: Decimal) -> str:
-        """Build Robokassa payment URL with signature (pass1)."""
+    def generate_link(self, order_id: int, amount: Decimal, revision: int = 0) -> str:
+        """Build Robokassa payment URL with signature (pass1).
+        revision is appended to InvId description to invalidate old links when price changes.
+        """
         out_sum = f"{amount:.2f}"
         inv_id = str(order_id)
 

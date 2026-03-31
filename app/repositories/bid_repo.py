@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.bid import Bid
@@ -37,3 +38,11 @@ class BidRepo:
             select(Bid).where(Bid.order_id == order_id, Bid.operator_id == operator_id)
         )
         return result.scalar_one_or_none()
+
+    async def get_losers(self, order_id: int, winner_operator_id: int) -> list[Bid]:
+        """All bids except the winner's — to notify losing operators."""
+        result = await self.session.execute(
+            select(Bid)
+            .where(Bid.order_id == order_id, Bid.operator_id != winner_operator_id)
+        )
+        return list(result.scalars().all())

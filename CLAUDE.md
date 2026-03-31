@@ -150,11 +150,48 @@ All bot messages must follow these rules:
 
 | File | Contents |
 |------|----------|
-| `0001_initial.py` | All tables, created manually. Enum values are Python names (`pending`, not Russian). |
-| `0002_fix_columns.py` | Renames `file_id` → `telegram_file_id` in order_files/solution_files; drops stale `file_type` from solution_files and `rating` from reviews |
+| `0001_initial.py` | All tables. Enum `messagedirection` uses values `client_to_operator`/`operator_to_client`. |
+| `0002_fix_columns.py` | Renames `file_id` → `telegram_file_id` in order_files/solution_files |
 | `0003_add_review_rating.py` | Adds `rating INTEGER NOT NULL DEFAULT 5` to reviews |
+| `0004_refactor.py` | Adds `order_logs` table; replaces `reviews.is_approved` with `reviews.status` (ReviewStatus enum); adds `reviews.moderated_by/at`; unique constraint on `(order_id,client_id)` in reviews and `(order_id,operator_id)` in bids; adds `solution_files.file_type`; adds `orders.payment_received_at`, `payment_confirmed_at`, `solution_uploaded_at`, `payment_revision`, `cancelled_by` |
+
+**messagedirection enum values**: DB stores `client_to_operator` and `operator_to_client` (from 0001). Python model `MessageDirection` uses these as `.value` (`client_to_op = "client_to_operator"`).
 
 **Do not delete migration files** — they are the source of truth for DB schema. Always create a new revision on top, never modify existing ones.
+
+## Payment Flow (Critical)
+
+1. Robokassa callback (`POST /payment/robokassa`) → validates signature + amount → sets `order.payment_received_at` → stays in `awaiting_payment` → notifies admin
+2. Admin `/confirmpayment {id}` → sets `payment_confirmed_at` + moves to `in_progress` → notifies client+operator
+3. No auto-transition to `in_progress` from callback. Always requires admin confirmation.
+4. Auto-confirm mode is architecturally prepared but **not active by default**.
+
+## Price Negotiation (awaiting_payment)
+
+Client: "Обсудить цену" → FSM `NegotiationStates.waiting_text` → message sent to operator with `negot_operator_kb`
+Operator options: Accept (sends requisites_kb) / Counter (FSM `CounterOfferStates.waiting_amount` → updates `order.payment_amount`, increments `payment_revision`) / Cancel order
+When price changes: `payment_revision` incremented — old Robokassa links invalidated.
+
+## Order Lifecycle (5 statuses only)
+
+Extra state tracked via fields (not new statuses):
+- `payment_received_at` — callback or "Я оплатил" pressed
+- `payment_confirmed_at` — admin confirmed payment
+- `solution_uploaded_at` — operator uploaded files (does NOT auto-complete order)
+- `payment_revision` — incremented on price change
+- `cancelled_by` — "client" | "admin" | "system" | "operator"
+
+Operator completes order manually via "✅ Завершить заявку" button (requires `solution_uploaded_at != null`).
+Admin can force-complete via `/completeorder {id}`.
+
+## Server-Side Guards
+
+- Bid: cannot bid on own order (client_id == operator_id)
+- Messaging: cannot message yourself (client_id == operator_id)
+- Review moderation: cannot moderate own review (client_id == actor_id)
+- /deleteoperator: blocked if operator has active assigned orders
+- All critical actions use `get_by_id_for_update()` (SELECT FOR UPDATE)
+- Auction close is idempotent: checks `status == pending` under lock
 
 ## Admin Commands (private DM only)
 
@@ -165,6 +202,7 @@ All bot messages must follow these rules:
 - `/endauction {order_id}` — forces auction close, assigns lowest bidder (ties broken by earliest bid)
 - `/confirmpayment {order_id}` — manually confirm payment, moves order to `in_progress`
 - `/stats` — order counts by status
+- `/completeorder {order_id}` — force-complete in_progress order
 - `/commands` — shows all available admin commands
 
 ## Auction Tie-Breaking

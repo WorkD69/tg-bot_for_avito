@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from app.db.models.review import Review
     from app.db.models.message import Message
     from app.db.models.operator_note import OperatorNote
+    from app.db.models.order_log import OrderLog
 
 
 class OrderStatus(str, enum.Enum):
@@ -51,6 +52,13 @@ class Order(Base, TimestampMixin):
     # message_id of the notification card posted to the operator group
     group_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
+    # Payment tracking flags (no new statuses — extra fields only)
+    payment_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payment_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    solution_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    payment_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    cancelled_by: Mapped[str | None] = mapped_column(String(16), nullable=True)  # "client" | "admin" | "system"
+
     client: Mapped["User"] = relationship("User", foreign_keys=[client_id], back_populates="client_orders")
     operator: Mapped["User | None"] = relationship(
         "User", foreign_keys=[operator_id], back_populates="operator_orders"
@@ -61,3 +69,4 @@ class Order(Base, TimestampMixin):
     reviews: Mapped[list["Review"]] = relationship("Review", back_populates="order")
     messages: Mapped[list["Message"]] = relationship("Message", back_populates="order")
     notes: Mapped[list["OperatorNote"]] = relationship("OperatorNote", back_populates="order")
+    logs: Mapped[list["OrderLog"]] = relationship("OrderLog", back_populates="order", order_by="OrderLog.created_at")

@@ -1,3 +1,4 @@
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from app.db.models.message import MessageDirection
@@ -13,11 +14,12 @@ def _msk(dt) -> str:
 
 
 def _money(amount) -> str:
-    """Format Decimal amount as rubles without kopecks when not needed."""
+    """Format Decimal amount as rubles without kopecks when not needed. No float."""
     if amount is None:
         return "—"
-    int_val = int(amount)
-    return f"{int_val} ₽" if amount == int_val else f"{amount:.2f} ₽"
+    d = Decimal(str(amount))
+    int_val = int(d)
+    return f"{int_val} ₽" if d == int_val else f"{d:.2f} ₽"
 
 
 def _parse_comment_ts(part: str) -> tuple[str, str]:
@@ -34,7 +36,7 @@ def _parse_comment_ts(part: str) -> tuple[str, str]:
 
 
 def _history_lines(order: Order) -> list[str]:
-    """Build interaction history lines (comment + messages)."""
+    """Build interaction history lines (comment + messages). Max 10 entries."""
     lines = []
     if order.comment:
         for part in order.comment.split("\n---\n"):
@@ -44,10 +46,11 @@ def _history_lines(order: Order) -> list[str]:
         ts = msg.created_at.astimezone(MSK).strftime("%d.%m.%Y %H:%M")
         icon = "👤 Клиент" if msg.direction == MessageDirection.client_to_op else "🔧 Оператор"
         lines.append(f"[{ts}] {icon}: {msg.text}")
-    return lines
+    # Limit history to last 10 entries to keep card readable
+    return lines[-10:]
 
 
-# ── Operator card (full info with bids) ──────────────────────────────────────
+# ── Operator card (full info with bids + notes) ───────────────────────────────
 
 def format_order_card(order: Order) -> str:
     client = order.client
@@ -64,8 +67,13 @@ def format_order_card(order: Order) -> str:
         f"Дата создания: {created} МСК",
         f"Дедлайн: {deadline}",
         f"Желаемый бюджет: {_money(order.budget)}",
-        f"Сбор цен до: {auction_end} МСК",
     ]
+
+    if order.status == OrderStatus.pending:
+        lines.append(f"Сбор цен до: {auction_end} МСК")
+
+    if order.payment_amount and order.status != OrderStatus.pending:
+        lines.append(f"Согласованная сумма: {_money(order.payment_amount)}")
 
     lines.append("Ставки операторов:")
     if order.bids:
@@ -80,6 +88,13 @@ def format_order_card(order: Order) -> str:
     history = _history_lines(order)
     lines.append("История взаимодействия:")
     lines.extend(history) if history else lines.append("  Сообщений пока нет")
+
+    # Show operator notes
+    if order.notes:
+        lines.append("📝 Заметки:")
+        for note in order.notes[-3:]:  # last 3 notes
+            ts = note.created_at.astimezone(MSK).strftime("%d.%m %H:%M")
+            lines.append(f"  [{ts}] {note.text}")
 
     return "\n".join(lines)
 
@@ -97,6 +112,9 @@ def format_client_card(order: Order) -> str:
         f"Дедлайн: {deadline}",
         f"Желаемый бюджет: {_money(order.budget)}",
     ]
+
+    if order.payment_amount and order.status == OrderStatus.awaiting_payment:
+        lines.append(f"Сумма к оплате: {_money(order.payment_amount)}")
 
     files_count = len(order.files) if order.files else 0
     lines.append(f"Прикреплённых файлов: {files_count}" if files_count else "Прикреплённых файлов: нет")
@@ -127,6 +145,9 @@ def format_client_history_card(order: Order) -> str:
         f"Дедлайн: {deadline}",
         f"Желаемый бюджет: {_money(order.budget)}",
     ]
+
+    if order.payment_amount:
+        lines.append(f"Итоговая сумма: {_money(order.payment_amount)}")
 
     files_count = len(order.files) if order.files else 0
     lines.append(f"Прикреплённых файлов: {files_count}" if files_count else "Прикреплённых файлов: нет")

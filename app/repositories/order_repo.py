@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.db.models.bid import Bid
 from app.db.models.message import Message
 from app.db.models.order import Order, OrderStatus
+from app.db.models.order_log import OrderLog, OrderLogAction
 
 
 def _with_relations():
@@ -20,6 +21,7 @@ def _with_relations():
         selectinload(Order.messages).selectinload(Message.sender),
         selectinload(Order.notes),
         selectinload(Order.reviews),
+        selectinload(Order.logs),
     )
 
 
@@ -45,6 +47,7 @@ class OrderRepo:
         )
         self.session.add(order)
         await self.session.flush()
+        await self.add_log(order_id=order.id, actor_id=client_id, action=OrderLogAction.created)
         return order
 
     async def get_by_id(self, order_id: int, load_relations: bool = False) -> Order | None:
@@ -52,6 +55,13 @@ class OrderRepo:
             return await self.session.get(Order, order_id)
         result = await self.session.execute(
             select(Order).where(Order.id == order_id).options(*_with_relations())
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_id_for_update(self, order_id: int) -> Order | None:
+        """Lock the row for transactional operations (auction close, payment confirm)."""
+        result = await self.session.execute(
+            select(Order).where(Order.id == order_id).with_for_update()
         )
         return result.scalar_one_or_none()
 
@@ -67,6 +77,18 @@ class OrderRepo:
             select(Order)
             .where(Order.status == OrderStatus.pending, Order.operator_id.is_(None))
             .order_by(Order.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def get_overdue_pending(self) -> list[Order]:
+        """Orders in pending status past their auction_end_at (missed scheduler job)."""
+        now = datetime.now(timezone.utc)
+        result = await self.session.execute(
+            select(Order).where(
+                Order.status == OrderStatus.pending,
+                Order.auction_end_at.isnot(None),
+                Order.auction_end_at < now,
+            )
         )
         return list(result.scalars().all())
 
@@ -115,7 +137,7 @@ class OrderRepo:
 
     async def update_status(self, order: Order, status: OrderStatus) -> None:
         order.status = status
-        order.updated_at = datetime.utcnow()
+        order.updated_at = datetime.now(timezone.utc)
         await self.session.flush()
 
     async def assign_operator(
@@ -124,10 +146,29 @@ class OrderRepo:
         order.operator_id = operator_id
         order.payment_amount = payment_amount
         order.payment_invoice_id = str(order.id)
+        order.payment_revision = (order.payment_revision or 0) + 1
         order.status = OrderStatus.awaiting_payment
-        order.updated_at = datetime.utcnow()
+        order.updated_at = datetime.now(timezone.utc)
+        await self.session.flush()
+
+    async def update_payment_amount(self, order: Order, new_amount: Decimal) -> None:
+        """Update payment amount (price negotiation) and increment revision to invalidate old links."""
+        order.payment_amount = new_amount
+        order.payment_revision = (order.payment_revision or 0) + 1
+        order.updated_at = datetime.now(timezone.utc)
         await self.session.flush()
 
     async def set_group_message_id(self, order: Order, message_id: int) -> None:
         order.group_message_id = message_id
+        await self.session.flush()
+
+    async def add_log(
+        self,
+        order_id: int,
+        action: OrderLogAction,
+        actor_id: int | None = None,
+        detail: str | None = None,
+    ) -> None:
+        log = OrderLog(order_id=order_id, actor_id=actor_id, action=action, detail=detail)
+        self.session.add(log)
         await self.session.flush()

@@ -5,14 +5,30 @@ class OrderCB(CallbackData, prefix="order"):
     order_id: int
     action: str
     # action values:
-    #   view        — open order card in operator DM
-    #   bid         — start bid FSM
-    #   files       — show files view (edit message)
-    #   back        — return to order card from files view
-    #   msg         — start messaging FSM (operator → client)
-    #   note        — start note FSM
-    #   solution    — start solution upload FSM
-    #   review      — start review FSM (client)
+    #   view            — open order card in operator DM (from group or list)
+    #   bid             — start bid FSM (operator)
+    #   files           — show files view (edit message)
+    #   back            — return to order card from files view
+    #   msg             — start messaging FSM (operator → client)
+    #   client_msg      — start messaging FSM (client → operator)
+    #   note            — start note FSM (operator)
+    #   solution        — start solution upload FSM (operator) / view solution (client)
+    #   review          — start review FSM (client)
+    #   client_view     — open order card in client DM (separate action to avoid operator handler)
+    #   back_list       — go back to active orders list (client)
+    #   back_history    — go back to history list (client)
+    #   cancel          — cancel order prompt (client)
+    #   cancel_yes      — confirm cancel (client)
+    #   cancel_no       — abort cancel (client)
+    #   add_comment     — add comment to order (client)
+    #   add_files       — add files to order (client)
+    #   pay             — show payment link (client, awaiting_payment)
+    #   negotiate       — start price negotiation (client, awaiting_payment)
+    #   send_req        — operator sends payment requisites to client
+    #   negot_accept    — operator accepts client counter-offer
+    #   negot_counter   — operator makes counter-offer
+    #   negot_cancel    — operator cancels order from negotiation
+    #   complete        — admin/operator marks order complete
 
 
 class ReviewCB(CallbackData, prefix="review"):
@@ -29,3 +45,10 @@ class ReviewListCB(CallbackData, prefix="reviews"):
 class RatingCB(CallbackData, prefix="rating"):
     order_id: int
     stars: int  # 1..5
+
+
+class NegotCB(CallbackData, prefix="negot"):
+    """Operator response to client price negotiation."""
+    order_id: int
+    action: str
+    # action values: accept | counter | cancel

@@ -1,7 +1,7 @@
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Numeric
+from sqlalchemy import ForeignKey, Numeric, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -13,6 +13,9 @@ if TYPE_CHECKING:
 
 class Bid(Base, TimestampMixin):
     __tablename__ = "bids"
+    __table_args__ = (
+        UniqueConstraint("order_id", "operator_id", name="uq_bid_order_operator"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), nullable=False, index=True)

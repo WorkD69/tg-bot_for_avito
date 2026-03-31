@@ -19,9 +19,13 @@ async def lifespan(app: FastAPI):
         drop_pending_updates=True,
     )
 
-    # Start APScheduler (registered in scheduler/setup.py, пункт 11)
+    # Start APScheduler
     from app.scheduler.setup import scheduler
     scheduler.start()
+
+    # Recover any auctions that expired while the bot was offline
+    from app.services.auction_service import recover_overdue_auctions
+    await recover_overdue_auctions(bot)
 
     yield
 

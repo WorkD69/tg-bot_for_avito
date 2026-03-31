@@ -3,10 +3,8 @@ from aiogram.types import CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.filters import IsOperator
-from app.bot.formatters import format_order_card
 from app.bot.keyboards.callbacks import OrderCB
-from app.bot.keyboards.order_inline import files_view_kb, free_order_card_kb, my_order_card_kb
-from app.db.models.order import OrderStatus
+from app.bot.keyboards.order_inline import files_view_kb
 from app.db.models.user import User
 from app.repositories.order_repo import OrderRepo
 
@@ -44,31 +42,4 @@ async def show_files(
         else:
             await callback.message.reply_document(f.telegram_file_id)
 
-    await callback.answer()
-
-
-# ── "← Назад" → restore order card ──────────────────────────────────────────
-
-@router.callback_query(OrderCB.filter(F.action == "back"), IsOperator())
-async def back_to_card(
-    callback: CallbackQuery,
-    callback_data: OrderCB,
-    session: AsyncSession,
-    user: User,
-):
-    order = await OrderRepo(session).get_by_id(callback_data.order_id, load_relations=True)
-    if not order:
-        await callback.answer("❌ Заявка не найдена", show_alert=True)
-        return
-
-    text = format_order_card(order)
-    final = (OrderStatus.completed, OrderStatus.cancelled)
-    if order.status in final:
-        kb = None
-    elif order.operator_id is None:
-        kb = free_order_card_kb(order.id)
-    else:
-        kb = my_order_card_kb(order.id)
-
-    await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
