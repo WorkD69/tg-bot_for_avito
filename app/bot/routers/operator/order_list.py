@@ -25,6 +25,11 @@ async def show_files(
         await callback.answer("❌ Заявка не найдена", show_alert=True)
         return
 
+    # Guard: cannot view files of another operator's assigned order via stale callback
+    if order.operator_id is not None and order.operator_id != user.id:
+        await callback.answer("🔒 Заявка назначена другому оператору", show_alert=True)
+        return
+
     if not order.files:
         await callback.answer("📭 К этой заявке нет файлов", show_alert=True)
         return

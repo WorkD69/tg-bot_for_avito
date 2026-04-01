@@ -64,7 +64,7 @@ async def send_operator_message(message: Message, state: FSMContext, session: As
         order_id=order_id,
         sender_id=user.id,
         text=message.text,
-        direction=MessageDirection.op_to_client,
+        direction=MessageDirection.operator_to_client,
     )
 
     from app.bot.instance import bot
@@ -129,13 +129,14 @@ async def send_requisites_done(message: Message, state: FSMContext, session: Asy
     from app.bot.keyboards.order_inline import client_awaiting_payment_kb
     from app.bot.formatters import _money
     try:
+        # Manual payment mode — client confirms via "Я оплатил" button
         await bot.send_message(
             client.telegram_id,
             f"💳 Реквизиты для оплаты заявки №{order_id}\n"
             f"Сумма: {_money(order.payment_amount)}\n\n"
             f"{message.text}\n\n"
             "После оплаты нажмите «Я оплатил»",
-            reply_markup=client_awaiting_payment_kb(order_id),
+            reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=True),
         )
     except Exception:
         pass
@@ -152,7 +153,9 @@ async def negot_accept(
     session: AsyncSession,
     user: User,
 ):
-    order = await OrderRepo(session).get_by_id(callback_data.order_id)
+    from decimal import Decimal, InvalidOperation
+    order_repo = OrderRepo(session)
+    order = await order_repo.get_by_id_for_update(callback_data.order_id)
     if not order or order.operator_id != user.id:
         await callback.answer("❌ Заявка не найдена или не ваша", show_alert=True)
         return
@@ -160,12 +163,65 @@ async def negot_accept(
         await callback.answer("⚠️ Заявка уже не ожидает оплаты", show_alert=True)
         return
 
-    # Price was already updated when client sent counter — just send requisites now
     await callback.message.edit_reply_markup(reply_markup=None)
+
+    # Apply the client's proposed amount — only NOW does payment_amount change officially.
+    # proposed_amount is carried in callback_data (encoded when client sent the counter).
+    proposed_amount: Decimal | None = None
+    if callback_data.proposed_amount:
+        try:
+            proposed_amount = Decimal(callback_data.proposed_amount)
+        except InvalidOperation:
+            pass
+
+    if proposed_amount and proposed_amount > 0:
+        await order_repo.update_agreed_price(order, proposed_amount)
+        from app.db.models.order_log import OrderLogAction
+        await order_repo.add_log(
+            order_id=order.id, actor_id=user.id,
+            action=OrderLogAction.price_updated,
+            detail=f"operator accepted client offer: {proposed_amount} ₽",
+        )
+        from app.bot.formatters import _money
+        new_amount_str = _money(proposed_amount)
+    else:
+        # General message accepted (no price change) — just prompt to send requisites
+        new_amount_str = None
+
+    # Notify client about the accepted price and next step
+    client = await UserRepo(session).get_by_id(order.client_id)
+    from app.config import settings
+    if client:
+        from app.bot.instance import bot
+        from app.bot.keyboards.order_inline import client_awaiting_payment_kb
+        try:
+            if settings.robokassa_login and proposed_amount:
+                from app.services.payment_service import PaymentService
+                link = PaymentService().generate_link(
+                    invoice_id=order.payment_invoice_id,
+                    amount=order.payment_amount,
+                )
+                await bot.send_message(
+                    client.telegram_id,
+                    f"✅ Оператор принял вашу цену: {new_amount_str}\n"
+                    f"💳 Новая ссылка для оплаты: {link}",
+                    reply_markup=client_awaiting_payment_kb(order.id, show_paid_btn=False),
+                )
+            else:
+                price_line = f"✅ Оператор принял цену: {new_amount_str}\n" if new_amount_str else "✅ Оператор согласен\n"
+                await bot.send_message(
+                    client.telegram_id,
+                    f"{price_line}⏳ Ожидайте — оператор отправит обновлённые реквизиты для оплаты",
+                    reply_markup=client_awaiting_payment_kb(order.id, show_paid_btn=True),
+                )
+        except Exception:
+            pass
+
     from app.bot.keyboards.order_inline import send_requisites_kb
+    price_confirm = f" по новой цене {new_amount_str}" if new_amount_str else ""
     await callback.message.answer(
-        f"✅ Предложение клиента принято\n"
-        f"Отправьте реквизиты для оплаты",
+        f"✅ Предложение клиента принято{price_confirm}\n"
+        "Отправьте клиенту реквизиты для оплаты",
         reply_markup=send_requisites_kb(order.id),
     )
     await callback.answer()
@@ -218,7 +274,9 @@ async def counter_offer_done(message: Message, state: FSMContext, session: Async
         await message.answer("⚠️ Заявка уже не ожидает оплаты")
         return
 
-    await order_repo.update_payment_amount(order, amount)
+    # Operator's counter IS authoritative — operator sets the price.
+    # update_agreed_price resets payment state so the new price must be paid fresh.
+    await order_repo.update_agreed_price(order, amount)
     from app.db.models.order_log import OrderLogAction
     await order_repo.add_log(
         order_id=order_id, actor_id=user.id,
@@ -227,21 +285,39 @@ async def counter_offer_done(message: Message, state: FSMContext, session: Async
     )
 
     client = await UserRepo(session).get_by_id(order.client_id)
+    from app.config import settings
+    from app.bot.formatters import _money
+    from app.bot.keyboards.order_inline import client_awaiting_payment_kb, send_requisites_kb
     if client:
         from app.bot.instance import bot
-        from app.bot.keyboards.order_inline import client_awaiting_payment_kb
-        from app.bot.formatters import _money
         try:
-            await bot.send_message(
-                client.telegram_id,
-                f"🔄 Оператор предлагает новую сумму по заявке №{order_id}: {_money(amount)}\n\n"
-                "Выберите действие:",
-                reply_markup=client_awaiting_payment_kb(order_id),
-            )
+            if settings.robokassa_login:
+                from app.services.payment_service import PaymentService
+                link = PaymentService().generate_link(
+                    invoice_id=order.payment_invoice_id,
+                    amount=order.payment_amount,
+                )
+                await bot.send_message(
+                    client.telegram_id,
+                    f"🔄 Оператор обновил сумму по заявке №{order_id}: {_money(amount)}\n"
+                    f"💳 Новая ссылка для оплаты: {link}",
+                    reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=False),
+                )
+            else:
+                await bot.send_message(
+                    client.telegram_id,
+                    f"🔄 Оператор предлагает новую сумму по заявке №{order_id}: {_money(amount)}\n"
+                    "⏳ Ожидайте обновлённые реквизиты для оплаты",
+                    reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=True),
+                )
         except Exception:
             pass
 
-    await message.answer(f"✅ Встречное предложение {amount} ₽ отправлено клиенту")
+    await message.answer(
+        f"✅ Встречное предложение {_money(amount)} по заявке №{order_id} отправлено клиенту\n"
+        "Отправьте клиенту обновлённые реквизиты для оплаты",
+        reply_markup=send_requisites_kb(order_id),
+    )
 
 
 @router.callback_query(NegotCB.filter(F.action == "cancel"), IsOperator())
@@ -260,9 +336,7 @@ async def negot_cancel_order(
         return
 
     order_repo = OrderRepo(session)
-    await order_repo.update_status(order, OrderStatus.cancelled)
-    order.cancelled_by = "operator"
-    await session.flush()
+    await order_repo.cancel(order, "operator")
     from app.db.models.order_log import OrderLogAction
     await order_repo.add_log(
         order_id=order.id, actor_id=user.id,

@@ -66,7 +66,8 @@ async def view_order_client(
         kb = client_cancelled_order_kb(order.id)
     elif order.status == OrderStatus.awaiting_payment:
         text = format_client_card(order)
-        kb = client_awaiting_payment_kb(order.id)
+        # In online (Robokassa) mode the link is in the message; "Я оплатил" is for manual mode only
+        kb = client_awaiting_payment_kb(order.id, show_paid_btn=not bool(settings.robokassa_login))
     else:
         text = format_client_card(order)
         can_cancel = order.status == OrderStatus.pending
@@ -119,9 +120,15 @@ async def cancel_order_prompt(
     if not order or order.client_id != user.id:
         await callback.answer("❌ Заявка не найдена", show_alert=True)
         return
-    # Allow cancel for pending OR awaiting_payment
+    # Allow cancel for pending OR awaiting_payment — but NOT after payment is already received
     if order.status not in (OrderStatus.pending, OrderStatus.awaiting_payment):
         await callback.answer("⚠️ Отменить можно только заявку в ожидании", show_alert=True)
+        return
+    if order.payment_received_at:
+        await callback.answer(
+            "⚠️ Отмена недоступна — оплата уже зафиксирована\nОбратитесь к администратору",
+            show_alert=True,
+        )
         return
     await callback.message.answer(
         f"❓ Вы уверены, что хотите отменить заявку №{order.id}?",
@@ -142,6 +149,7 @@ async def cancel_order_confirm(
     callback_data: OrderCB,
     session: AsyncSession,
     user: User,
+    post_commit: list,
 ):
     order_repo = OrderRepo(session)
     order = await order_repo.get_by_id_for_update(callback_data.order_id)
@@ -151,35 +159,39 @@ async def cancel_order_confirm(
     if order.status not in (OrderStatus.pending, OrderStatus.awaiting_payment):
         await callback.answer("⚠️ Заявку уже нельзя отменить", show_alert=True)
         return
+    if order.payment_received_at:
+        await callback.answer(
+            "⚠️ Отмена недоступна — оплата уже зафиксирована",
+            show_alert=True,
+        )
+        return
 
-    await order_repo.update_status(order, OrderStatus.cancelled)
-    order.cancelled_by = "client"
-    await session.flush()
+    # Capture pre-cancel status before atomic transition (for scheduler removal)
+    was_pending = order.status == OrderStatus.pending
+
+    await order_repo.cancel(order, "client")
     await order_repo.add_log(
         order_id=order.id, actor_id=user.id,
         action=OrderLogAction.cancelled,
         detail="Client cancelled",
     )
 
-    # Cancel scheduler job if pending
-    if order.status == OrderStatus.pending:
+    # Cancel scheduler job if the order was still in auction
+    if was_pending:
         from app.services.auction_service import _remove_scheduler_job
         _remove_scheduler_job(order.id)
 
     await callback.message.answer(f"✅ Заявка №{order.id} отменена")
     await callback.answer()
 
-    # Notify operator group with button
+    # Notify operator group AFTER commit — deferred via post_commit
     from app.bot.instance import bot as _bot
     from app.bot.keyboards.order_inline import group_new_order_kb
-    try:
-        await _bot.send_message(
-            settings.operator_group_id,
-            f"❌ Заявка №{order.id} отменена клиентом",
-            reply_markup=group_new_order_kb(order.id),
-        )
-    except Exception:
-        pass
+    post_commit.append(_bot.send_message(
+        settings.operator_group_id,
+        f"❌ Заявка №{order.id} отменена клиентом",
+        reply_markup=group_new_order_kb(order.id),
+    ))
 
 
 # ── awaiting_payment: client confirmed payment ────────────────────────────────
@@ -190,38 +202,41 @@ async def client_paid(
     callback_data: OrderCB,
     session: AsyncSession,
     user: User,
+    post_commit: list,
 ):
-    order = await OrderRepo(session).get_by_id(callback_data.order_id)
+    order_repo = OrderRepo(session)
+    order = await order_repo.get_by_id_for_update(callback_data.order_id)
     if not order or order.client_id != user.id:
         await callback.answer("❌ Заявка не найдена", show_alert=True)
         return
     if order.status != OrderStatus.awaiting_payment:
         await callback.answer("⚠️ Заявка уже не ожидает оплаты", show_alert=True)
         return
+    # Idempotency: if payment_received_at is already set, this is a duplicate press
     if order.payment_received_at:
-        await callback.answer("ℹ️ Оплата уже зафиксирована — ждите подтверждения администратора", show_alert=True)
+        await callback.answer(
+            "ℹ️ Оплата уже зафиксирована — ждите подтверждения администратора",
+            show_alert=True,
+        )
         return
 
     from datetime import datetime, timezone
     order.payment_received_at = datetime.now(timezone.utc)
     await session.flush()
-    await OrderRepo(session).add_log(
+    await order_repo.add_log(
         order_id=order.id, actor_id=user.id,
         action=OrderLogAction.payment_received,
         detail="Client pressed 'Я оплатил'",
     )
 
-    # Notify admin
+    # Admin notification deferred — fires after commit
     from app.bot.instance import bot as _bot
-    try:
-        await _bot.send_message(
-            settings.admin_telegram_id,
-            f"💳 Клиент сообщил об оплате заявки №{order.id}\n"
-            f"Сумма: {_money(order.payment_amount)}\n"
-            f"Подтвердить: /confirmpayment {order.id}",
-        )
-    except Exception:
-        pass
+    post_commit.append(_bot.send_message(
+        settings.admin_telegram_id,
+        f"💳 Клиент сообщил об оплате заявки №{order.id}\n"
+        f"Сумма: {_money(order.payment_amount)}\n"
+        f"Подтвердить: /confirmpayment {order.id}",
+    ))
 
     await callback.message.answer(
         "✅ Спасибо! Мы уведомили администратора об оплате\n"
@@ -272,9 +287,11 @@ async def client_negotiate_done(message: Message, state: FSMContext, session: As
         await message.answer("⚠️ Заявка уже не ожидает оплаты")
         return
 
-    # Try to parse as counter price
+    # Try to parse as counter price — do NOT change payment_amount yet.
+    # The proposed amount is encoded in the operator's Accept button callback_data.
+    # Official payment_amount only changes when operator explicitly accepts.
     from decimal import Decimal, InvalidOperation
-    counter_amount = None
+    counter_amount: Decimal | None = None
     try:
         counter_amount = Decimal(message.text.strip().replace(",", ".").replace(" ", "").replace("₽", ""))
         if counter_amount <= 0:
@@ -282,28 +299,21 @@ async def client_negotiate_done(message: Message, state: FSMContext, session: As
     except InvalidOperation:
         pass
 
-    if counter_amount:
-        await order_repo.update_payment_amount(order, counter_amount)
-        await order_repo.add_log(
-            order_id=order_id, actor_id=user.id,
-            action=OrderLogAction.price_updated,
-            detail=f"client counter: {counter_amount} ₽",
-        )
-
-    # Notify operator
+    # Notify operator — proposed amount travels via NegotCB, not via DB
     from app.repositories.user_repo import UserRepo
     operator = await UserRepo(session).get_by_id(order.operator_id)
     if operator:
         from app.bot.instance import bot
         from app.bot.keyboards.order_inline import negot_operator_kb
         client_name = f"@{user.username}" if user.username else user.full_name
-        counter_str = f"\n💰 Предложенная сумма: {_money(counter_amount)}" if counter_amount else ""
+        proposed_str = str(counter_amount) if counter_amount else ""
+        counter_label = f"\n💰 Предложенная сумма: {_money(counter_amount)}" if counter_amount else ""
         try:
             await bot.send_message(
                 operator.telegram_id,
-                f"💬 Сообщение от клиента {client_name} по заявке №{order_id}:{counter_str}\n\n"
+                f"💬 Сообщение от клиента {client_name} по заявке №{order_id}:{counter_label}\n\n"
                 f"{message.text}",
-                reply_markup=negot_operator_kb(order_id),
+                reply_markup=negot_operator_kb(order_id, proposed_amount=proposed_str),
             )
         except Exception:
             pass
@@ -325,6 +335,9 @@ async def add_comment_start(
     if not order or order.client_id != user.id:
         await callback.answer("❌ Заявка не найдена", show_alert=True)
         return
+    if order.status in (OrderStatus.completed, OrderStatus.cancelled):
+        await callback.answer("⚠️ Нельзя редактировать завершённую или отменённую заявку", show_alert=True)
+        return
     await state.set_state(OrderEditStates.waiting_comment)
     await state.update_data(order_id=order.id)
     await callback.message.answer("✏️ Введите новый комментарий к заявке:")
@@ -332,7 +345,9 @@ async def add_comment_start(
 
 
 @router.message(OrderEditStates.waiting_comment, F.text, IsClient())
-async def add_comment_done(message: Message, state: FSMContext, session: AsyncSession, user: User):
+async def add_comment_done(
+    message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list
+):
     data = await state.get_data()
     order_id: int = data["order_id"]
     order_repo = OrderRepo(session)
@@ -340,6 +355,10 @@ async def add_comment_done(message: Message, state: FSMContext, session: AsyncSe
     if not order or order.client_id != user.id:
         await state.clear()
         await message.answer("❌ Заявка не найдена")
+        return
+    if order.status in (OrderStatus.completed, OrderStatus.cancelled):
+        await state.clear()
+        await message.answer("⚠️ Заявка уже завершена или отменена — комментарий не добавлен")
         return
     from datetime import datetime, timezone as tz
     ts = datetime.now(tz.utc).isoformat()
@@ -354,14 +373,11 @@ async def add_comment_done(message: Message, state: FSMContext, session: AsyncSe
 
     from app.bot.instance import bot as _bot
     from app.bot.keyboards.order_inline import group_new_order_kb
-    try:
-        await _bot.send_message(
-            settings.operator_group_id,
-            f"✏️ К заявке №{order_id} добавлен комментарий клиентом",
-            reply_markup=group_new_order_kb(order_id),
-        )
-    except Exception:
-        pass
+    post_commit.append(_bot.send_message(
+        settings.operator_group_id,
+        f"✏️ К заявке №{order_id} добавлен комментарий клиентом",
+        reply_markup=group_new_order_kb(order_id),
+    ))
 
 
 # ── Files ─────────────────────────────────────────────────────────────────────
@@ -377,6 +393,9 @@ async def add_files_start(
     order = await OrderRepo(session).get_by_id(callback_data.order_id, load_relations=True)
     if not order or order.client_id != user.id:
         await callback.answer("❌ Заявка не найдена", show_alert=True)
+        return
+    if order.status in (OrderStatus.completed, OrderStatus.cancelled):
+        await callback.answer("⚠️ Нельзя добавить файлы к завершённой заявке", show_alert=True)
         return
     if len(order.files) >= MAX_FILES:
         await callback.answer(f"⚠️ Достигнут лимит {MAX_FILES} файлов", show_alert=True)
@@ -415,12 +434,23 @@ async def _save_file(message: Message, state: FSMContext, session: AsyncSession,
 
 
 @router.message(OrderEditStates.waiting_files, F.text == "/done", IsClient())
-async def add_files_done(message: Message, state: FSMContext, session: AsyncSession, user: User):
+async def add_files_done(
+    message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list
+):
     data = await state.get_data()
     order_id: int = data["order_id"]
     await state.clear()
 
     order_repo = OrderRepo(session)
+    # Re-validate: order may have changed status since FSM started
+    order = await order_repo.get_by_id(order_id)
+    if not order or order.client_id != user.id:
+        await message.answer("❌ Заявка не найдена")
+        return
+    if order.status in (OrderStatus.completed, OrderStatus.cancelled):
+        await message.answer("⚠️ Заявка уже завершена или отменена — файлы не приняты")
+        return
+
     await order_repo.add_log(
         order_id=order_id, actor_id=user.id, action=OrderLogAction.files_added,
     )
@@ -428,19 +458,16 @@ async def add_files_done(message: Message, state: FSMContext, session: AsyncSess
 
     from app.bot.instance import bot as _bot
     from app.bot.keyboards.order_inline import group_new_order_kb
-    try:
-        await _bot.send_message(
-            settings.operator_group_id,
-            f"📎 К заявке №{order_id} добавлены файлы клиентом",
-            reply_markup=group_new_order_kb(order_id),
-        )
-    except Exception:
-        pass
+    post_commit.append(_bot.send_message(
+        settings.operator_group_id,
+        f"📎 К заявке №{order_id} добавлены файлы клиентом",
+        reply_markup=group_new_order_kb(order_id),
+    ))
 
 
 # ── View solution (client) ────────────────────────────────────────────────────
 
-@router.callback_query(OrderCB.filter(F.action == "solution"), IsClient())
+@router.callback_query(OrderCB.filter(F.action == "client_solution"), IsClient())
 async def view_solution(
     callback: CallbackQuery,
     callback_data: OrderCB,

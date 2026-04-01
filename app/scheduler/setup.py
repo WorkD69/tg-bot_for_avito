@@ -7,6 +7,9 @@ scheduler = AsyncIOScheduler(
     jobstores={
         "default": SQLAlchemyJobStore(url=settings.sync_database_url)
     },
-    job_defaults={"misfire_grace_time": 60},
+    # misfire_grace_time=3600: if the scheduler was down and a job is up to 1 hour
+    # overdue, it still fires. Startup recovery (recover_overdue_auctions) handles
+    # anything older than that.
+    job_defaults={"misfire_grace_time": 3600},
     timezone="UTC",
 )

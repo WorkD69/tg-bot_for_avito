@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -20,7 +21,16 @@ MSK = timezone(timedelta(hours=3))
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 @router.message(F.text == BTN_CREATE, IsClient())
-async def start_order(message: Message, state: FSMContext):
+async def start_order(message: Message, state: FSMContext, session: AsyncSession, user: User):
+    # Guard: check active order limit before starting the FSM
+    active_orders = await OrderRepo(session).get_client_active_orders(user.id)
+    if len(active_orders) >= 5:
+        await message.answer(
+            "❌ У вас уже 5 активных заявок\n"
+            "Дождитесь завершения одной из них, прежде чем создавать новую",
+            reply_markup=client_main_kb(),
+        )
+        return
     await state.set_state(OrderCreateStates.waiting_files)
     await state.update_data(files=[])
     await message.answer(
@@ -106,12 +116,14 @@ async def got_deadline(message: Message, state: FSMContext):
 # ── Step 4: budget → create order ─────────────────────────────────────────────
 
 @router.message(OrderCreateStates.waiting_budget, F.text)
-async def got_budget(message: Message, state: FSMContext, session: AsyncSession, user: User):
+async def got_budget(
+    message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list
+):
     try:
-        budget = float(message.text.strip().replace(",", "."))
+        budget = Decimal(message.text.strip().replace(",", "."))
         if budget <= 0:
             raise ValueError
-    except ValueError:
+    except (ValueError, InvalidOperation):
         await message.answer("❌ Введите положительное число, например 1500:")
         return
 
@@ -130,7 +142,8 @@ async def got_budget(message: Message, state: FSMContext, session: AsyncSession,
 
     from datetime import date
     deadline = date.fromisoformat(data["deadline"]) if data.get("deadline") else None
-    auction_end_at = datetime.utcnow() + timedelta(minutes=120)
+    # UTC-aware auction end time (replaces deprecated datetime.utcnow())
+    auction_end_at = datetime.now(timezone.utc) + timedelta(minutes=120)
 
     order_repo = OrderRepo(session)
     order = await order_repo.create(
@@ -148,10 +161,10 @@ async def got_budget(message: Message, state: FSMContext, session: AsyncSession,
 
     await state.clear()
 
-    # Start auction (full implementation in пункт 11)
+    # Start auction — pass post_commit so group notify fires after commit
     from app.services.auction_service import AuctionService
     from app.bot.instance import bot
-    auction = AuctionService(session=session, bot=bot)
+    auction = AuctionService(session=session, bot=bot, deferred=post_commit)
     await auction.start_auction(order)
 
     await message.answer(

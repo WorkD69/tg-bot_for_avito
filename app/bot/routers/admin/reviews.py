@@ -24,15 +24,8 @@ async def approve_review(
         await callback.answer("ℹ️ Отзыв уже обработан", show_alert=True)
         return
 
-    # Guard: admin cannot moderate their own review
-    from app.db.models.user import User
-    admin_user: User = callback.bot  # use tg_id matching
-    # We check via session
     from app.repositories.user_repo import UserRepo
     actor = await UserRepo(session).get_by_telegram_id(callback.from_user.id)
-    if actor and review.client_id == actor.id:
-        await callback.answer("⚠️ Нельзя модерировать собственный отзыв", show_alert=True)
-        return
 
     await ReviewRepo(session).set_status(review, ReviewStatus.approved, moderator_id=actor.id if actor else None)
     await callback.message.edit_reply_markup(reply_markup=None)
@@ -56,9 +49,6 @@ async def reject_review(
 
     from app.repositories.user_repo import UserRepo
     actor = await UserRepo(session).get_by_telegram_id(callback.from_user.id)
-    if actor and review.client_id == actor.id:
-        await callback.answer("⚠️ Нельзя модерировать собственный отзыв", show_alert=True)
-        return
 
     # Soft delete — set status=rejected, keep in DB
     await ReviewRepo(session).set_status(review, ReviewStatus.rejected, moderator_id=actor.id if actor else None)

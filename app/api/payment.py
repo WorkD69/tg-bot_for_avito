@@ -25,6 +25,9 @@ async def robokassa_callback(
         logger.warning("Robokassa: invalid signature for InvId=%s", InvId)
         return PlainTextResponse("bad sign", status_code=400)
 
+    admin_notify_text: str | None = None
+    admin_notify_order_id: int | None = None
+
     async with AsyncSessionFactory() as session:
         try:
             order_repo = OrderRepo(session)
@@ -34,7 +37,20 @@ async def robokassa_callback(
                 return PlainTextResponse("not found", status_code=404)
 
             if order.status != OrderStatus.awaiting_payment:
-                # Already processed (duplicate callback) — still return OK
+                # Already processed (status advanced past awaiting_payment) — idempotent OK
+                logger.info(
+                    "Robokassa: duplicate callback for InvId=%s, status=%s — no-op",
+                    InvId, order.status,
+                )
+                return PlainTextResponse(f"OK{InvId}")
+
+            # Idempotency: payment_received_at already set means we already processed
+            # this callback (Robokassa retries are common). Return OK without re-notifying.
+            if order.payment_received_at:
+                logger.info(
+                    "Robokassa: duplicate callback for InvId=%s — payment_received_at already set, no-op",
+                    InvId,
+                )
                 return PlainTextResponse(f"OK{InvId}")
 
             # Verify amount matches expected payment_amount
@@ -50,8 +66,8 @@ async def robokassa_callback(
             except Exception:
                 pass
 
-            # Mark payment received — do NOT move to in_progress yet
-            # Admin must confirm via /confirmpayment
+            # Mark payment received — do NOT move to in_progress yet.
+            # Admin confirms via /confirmpayment (manual confirmation model).
             order.payment_received_at = datetime.now(timezone.utc)
             await session.flush()
 
@@ -61,26 +77,34 @@ async def robokassa_callback(
                 detail=f"Robokassa callback: OutSum={OutSum}, InvId={InvId}",
             )
 
-            # Notify admin to confirm
-            from app.bot.instance import bot
-            from app.config import settings
-            try:
-                await bot.send_message(
-                    settings.admin_telegram_id,
-                    f"💳 Получена оплата по заявке №{order.id}\n"
-                    f"Сумма: {OutSum} ₽\n"
-                    f"Подтвердить: /confirmpayment {order.id}",
-                )
-            except Exception:
-                pass
+            # Collect notification data before commit (don't touch bot inside session)
+            admin_notify_order_id = order.id
+            admin_notify_text = (
+                f"💳 Получена оплата по заявке №{order.id}\n"
+                f"Сумма: {OutSum} ₽\n"
+                f"Подтвердить: /confirmpayment {order.id}"
+            )
 
             await session.commit()
-            logger.info("Robokassa: payment received for order #%s, awaiting admin confirmation", order.id)
+            logger.info(
+                "Robokassa: payment received for order #%s, awaiting admin confirmation", order.id
+            )
 
         except Exception:
             await session.rollback()
             logger.exception("Robokassa callback error for InvId=%s", InvId)
             return PlainTextResponse("error", status_code=500)
+
+    # Notify admin AFTER commit — so admin sees a committed state
+    if admin_notify_text and admin_notify_order_id is not None:
+        from app.bot.instance import bot
+        from app.config import settings
+        try:
+            await bot.send_message(settings.admin_telegram_id, admin_notify_text)
+        except Exception:
+            logger.exception(
+                "Robokassa: failed to notify admin for order #%d", admin_notify_order_id
+            )
 
     # Robokassa requires exactly this string
     return PlainTextResponse(f"OK{InvId}")

@@ -153,9 +153,10 @@ All bot messages must follow these rules:
 | `0001_initial.py` | All tables. Enum `messagedirection` uses values `client_to_operator`/`operator_to_client`. |
 | `0002_fix_columns.py` | Renames `file_id` → `telegram_file_id` in order_files/solution_files |
 | `0003_add_review_rating.py` | Adds `rating INTEGER NOT NULL DEFAULT 5` to reviews |
-| `0004_refactor.py` | Adds `order_logs` table; replaces `reviews.is_approved` with `reviews.status` (ReviewStatus enum); adds `reviews.moderated_by/at`; unique constraint on `(order_id,client_id)` in reviews and `(order_id,operator_id)` in bids; adds `solution_files.file_type`; adds `orders.payment_received_at`, `payment_confirmed_at`, `solution_uploaded_at`, `payment_revision`, `cancelled_by` |
+| `0004_refactor.py` | Adds `order_logs` table; replaces `reviews.is_approved` with `reviews.status` (ReviewStatus enum); adds `reviews.moderated_by/at`; unique constraint on `(order_id,client_id)` in reviews and `(order_id,operator_id)` in bids (with dedup before constraints); adds `solution_files.file_type`; adds `orders.payment_received_at`, `payment_confirmed_at`, `solution_uploaded_at`, `payment_revision`, `cancelled_by` |
+| `0005_schema_fixes.py` | Aligns `bids.amount` precision to `Numeric(12,2)`; makes `messages.text` NOT NULL |
 
-**messagedirection enum values**: DB stores `client_to_operator` and `operator_to_client` (from 0001). Python model `MessageDirection` uses these as `.value` (`client_to_op = "client_to_operator"`).
+**messagedirection enum members**: Python `MessageDirection.client_to_operator` and `MessageDirection.operator_to_client` — `.name` matches DB enum labels from 0001. Do NOT use old aliases `client_to_op`/`op_to_client`.
 
 **Do not delete migration files** — they are the source of truth for DB schema. Always create a new revision on top, never modify existing ones.
 

@@ -12,7 +12,8 @@ class OrderCB(CallbackData, prefix="order"):
     #   msg             — start messaging FSM (operator → client)
     #   client_msg      — start messaging FSM (client → operator)
     #   note            — start note FSM (operator)
-    #   solution        — start solution upload FSM (operator) / view solution (client)
+    #   solution        — start solution upload FSM (operator only)
+    #   client_solution — view solution files (client only; kept separate to avoid collision with operator handler)
     #   review          — start review FSM (client)
     #   client_view     — open order card in client DM (separate action to avoid operator handler)
     #   back_list       — go back to active orders list (client)
@@ -48,7 +49,12 @@ class RatingCB(CallbackData, prefix="rating"):
 
 
 class NegotCB(CallbackData, prefix="negot"):
-    """Operator response to client price negotiation."""
+    """Operator response to client price negotiation.
+
+    proposed_amount: decimal string of client's proposed price (empty = no price proposal).
+    Only meaningful for action="accept" — encodes which amount the operator is accepting.
+    """
     order_id: int
     action: str
+    proposed_amount: str = ""
     # action values: accept | counter | cancel

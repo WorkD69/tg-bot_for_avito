@@ -103,44 +103,53 @@ def send_requisites_kb(order_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def client_awaiting_payment_kb(order_id: int) -> InlineKeyboardMarkup:
-    """Client DM — awaiting_payment card."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ Я оплатил",
-                    callback_data=OrderCB(order_id=order_id, action="pay").pack(),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💬 Обсудить цену",
-                    callback_data=OrderCB(order_id=order_id, action="negotiate").pack(),
-                ),
-                InlineKeyboardButton(
-                    text="❌ Отменить заявку",
-                    callback_data=OrderCB(order_id=order_id, action="cancel").pack(),
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="← Назад",
-                    callback_data=OrderCB(order_id=order_id, action="back_list").pack(),
-                ),
-            ],
-        ]
-    )
+def client_awaiting_payment_kb(order_id: int, show_paid_btn: bool = True) -> InlineKeyboardMarkup:
+    """Client DM — awaiting_payment card.
+
+    show_paid_btn: True in manual requisites mode (client confirms payment manually).
+                   False in online Robokassa mode (payment is confirmed via webhook).
+    """
+    rows = []
+    if show_paid_btn:
+        rows.append([
+            InlineKeyboardButton(
+                text="✅ Я оплатил",
+                callback_data=OrderCB(order_id=order_id, action="pay").pack(),
+            ),
+        ])
+    rows.append([
+        InlineKeyboardButton(
+            text="💬 Обсудить цену",
+            callback_data=OrderCB(order_id=order_id, action="negotiate").pack(),
+        ),
+        InlineKeyboardButton(
+            text="❌ Отменить заявку",
+            callback_data=OrderCB(order_id=order_id, action="cancel").pack(),
+        ),
+    ])
+    rows.append([
+        InlineKeyboardButton(
+            text="← Назад",
+            callback_data=OrderCB(order_id=order_id, action="back_list").pack(),
+        ),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def negot_operator_kb(order_id: int) -> InlineKeyboardMarkup:
-    """Operator response to client price negotiation."""
+def negot_operator_kb(order_id: int, proposed_amount: str = "") -> InlineKeyboardMarkup:
+    """Operator response to client price negotiation.
+
+    proposed_amount: decimal string of client's counter-offer (empty = general message, no price).
+    Encoded into the Accept button so the accept handler knows which price to apply officially.
+    """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="✅ Принять предложение",
-                    callback_data=NegotCB(order_id=order_id, action="accept").pack(),
+                    callback_data=NegotCB(
+                        order_id=order_id, action="accept", proposed_amount=proposed_amount
+                    ).pack(),
                 ),
             ],
             [
@@ -178,7 +187,8 @@ def client_completed_order_kb(order_id: int) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="📂 Решение",
-                    callback_data=OrderCB(order_id=order_id, action="solution").pack(),
+                    # client_solution — separate from operator's "solution" (upload) action
+                    callback_data=OrderCB(order_id=order_id, action="client_solution").pack(),
                 ),
                 InlineKeyboardButton(
                     text="💬 Задать вопрос",

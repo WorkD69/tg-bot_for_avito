@@ -53,6 +53,10 @@ async def send_client_message(message: Message, state: FSMContext, session: Asyn
     if not order or order.client_id != user.id:
         await message.answer("❌ Заявка не найдена")
         return
+    # Re-validate self-message guard (operator may have changed since FSM started)
+    if order.operator_id == user.id:
+        await message.answer("⚠️ Нельзя написать самому себе")
+        return
 
     # Resolve operator telegram_id from DB id
     operator = await UserRepo(session).get_by_id(operator_db_id)
@@ -64,7 +68,7 @@ async def send_client_message(message: Message, state: FSMContext, session: Asyn
         order_id=order_id,
         sender_id=user.id,
         text=message.text,
-        direction=MessageDirection.client_to_op,
+        direction=MessageDirection.client_to_operator,
     )
 
     from app.bot.instance import bot

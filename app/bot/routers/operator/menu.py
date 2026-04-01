@@ -61,6 +61,34 @@ async def group_done_orders(message: Message, session: AsyncSession, bot: Bot, u
     await bot.send_message(user.telegram_id, text, reply_markup=kb)
 
 
+# ── Same buttons IN OPERATOR DM → respond directly in DM ─────────────────────
+# Group handlers have IsOperatorGroup() so they only fire in group chat.
+# These DM handlers fire when operator uses the operator_dm_kb in private chat.
+
+@router.message(IsOperator(), F.text == BTN_FREE)
+async def dm_free_orders(message: Message, session: AsyncSession, user: User):
+    orders = await OrderRepo(session).get_free_orders()
+    text = "📋 Свободные заявки:" if orders else "✅ Свободных заявок нет"
+    kb = orders_list_kb(orders) if orders else None
+    await message.answer(text, reply_markup=kb)
+
+
+@router.message(IsOperator(), F.text == BTN_MY)
+async def dm_my_orders(message: Message, session: AsyncSession, user: User):
+    orders = await OrderRepo(session).get_operator_active_orders(user.id)
+    text = "📋 Ваши заявки:" if orders else "📭 У вас нет активных заявок"
+    kb = orders_list_kb(orders) if orders else None
+    await message.answer(text, reply_markup=kb)
+
+
+@router.message(IsOperator(), F.text == BTN_DONE)
+async def dm_done_orders(message: Message, session: AsyncSession, user: User):
+    orders = await OrderRepo(session).get_operator_completed_orders(user.id)
+    text = "🗂 История выполненных заявок:" if orders else "📭 Нет выполненных заявок"
+    kb = orders_list_kb(orders) if orders else None
+    await message.answer(text, reply_markup=kb)
+
+
 # ── "Перейти к заявке" pressed IN GROUP → open card in operator DM ───────────
 
 @router.callback_query(OrderCB.filter(F.action == "view"), IsOperatorGroup(), IsOperator())

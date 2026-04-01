@@ -58,8 +58,24 @@ def upgrade() -> None:
     # Unique constraint: one review per (order_id, client_id)
     op.create_unique_constraint("uq_review_order_client", "reviews", ["order_id", "client_id"])
 
-    # ── 5. Unique constraint on bids (order_id, operator_id) ─────────────────
+    # ── 5. Dedup + unique constraints ────────────────────────────────────────
+    # Remove duplicate bids (same operator, same order) — keep earliest (lowest id)
+    # Tie-breaking rule: earliest bid wins the auction, so we keep MIN(id) = earliest.
+    op.execute("""
+        DELETE FROM bids
+        WHERE id NOT IN (
+            SELECT MIN(id) FROM bids GROUP BY order_id, operator_id
+        )
+    """)
     op.create_unique_constraint("uq_bid_order_operator", "bids", ["order_id", "operator_id"])
+
+    # Remove duplicate reviews (same client, same order) — keep earliest
+    op.execute("""
+        DELETE FROM reviews
+        WHERE id NOT IN (
+            SELECT MIN(id) FROM reviews GROUP BY order_id, client_id
+        )
+    """)
 
     # ── 6. Create order_logs table ────────────────────────────────────────────
     orderlogaction = sa.Enum(

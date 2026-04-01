@@ -1,7 +1,12 @@
+# Environment — never commit real credentials
 .env
+
+# Python
 __pycache__/
 *.py[cod]
-*.log
-wheels/
+*.egg-info/
 .venv/
 venv/
+
+# Docker volumes / local state
+*.log

@@ -44,7 +44,7 @@ def _history_lines(order: Order) -> list[str]:
             lines.append(f"[{ts}] 👤 Клиент (комментарий): {text}")
     for msg in (order.messages or []):
         ts = msg.created_at.astimezone(MSK).strftime("%d.%m.%Y %H:%M")
-        icon = "👤 Клиент" if msg.direction == MessageDirection.client_to_op else "🔧 Оператор"
+        icon = "👤 Клиент" if msg.direction == MessageDirection.client_to_operator else "🔧 Оператор"
         lines.append(f"[{ts}] {icon}: {msg.text}")
     # Limit history to last 10 entries to keep card readable
     return lines[-10:]

@@ -9,6 +9,7 @@ from app.bot.keyboards.callbacks import OrderCB, RatingCB, ReviewListCB
 from app.bot.keyboards.client_reply import BTN_REVIEWS, client_main_kb
 from app.bot.states.note import ReviewStates
 from app.config import settings
+from app.db.models.review import ReviewStatus
 from app.db.models.user import User
 from app.repositories.order_repo import OrderRepo
 from app.repositories.review_repo import ReviewRepo
@@ -48,7 +49,12 @@ async def my_reviews(callback: CallbackQuery, session: AsyncSession, user: User)
 
     lines = []
     for r in reviews:
-        status = "✅ одобрен" if r.is_approved else "⏳ на модерации"
+        if r.status == ReviewStatus.approved:
+            status = "✅ одобрен"
+        elif r.status == ReviewStatus.pending:
+            status = "⏳ на модерации"
+        else:
+            status = "❌ отклонён"
         stars = "⭐" * r.rating
         lines.append(f"{status} {stars}: {r.text}")
     await callback.message.answer("\n\n".join(lines))
@@ -98,35 +104,40 @@ async def got_rating(
 
 
 @router.message(ReviewStates.waiting_text, F.text, IsClient())
-async def got_review_text(message: Message, state: FSMContext, session: AsyncSession, user: User):
-    from aiogram.exceptions import TelegramBadRequest
-
+async def got_review_text(
+    message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list
+):
     data = await state.get_data()
     order_id: int = data["order_id"]
     rating: int = data.get("rating", 5)
-    review = await ReviewRepo(session).create(
+
+    # Idempotent create: returns (review, is_new=False) if review already exists
+    review, is_new = await ReviewRepo(session).create(
         order_id=order_id, client_id=user.id, text=message.text.strip(), rating=rating,
     )
     await state.clear()
 
-    from app.bot.keyboards.admin_inline import review_moderation_kb
-    from app.bot.instance import bot
-
-    client_name = f"@{user.username}" if user.username else user.full_name
-    stars = "⭐" * rating
-    admin_text = (
-        f"📝 Новый отзыв от {client_name} по заявке №{order_id} ({stars}):\n\n{review.text}"
-    )
-    try:
-        await bot.send_message(
+    if is_new:
+        # Defer admin notification — fires after commit so admin sees a committed review
+        from app.bot.keyboards.admin_inline import review_moderation_kb
+        from app.bot.instance import bot
+        client_name = f"@{user.username}" if user.username else user.full_name
+        stars = "⭐" * rating
+        admin_text = (
+            f"📝 Новый отзыв от {client_name} по заявке №{order_id} ({stars}):\n\n{review.text}"
+        )
+        post_commit.append(bot.send_message(
             settings.admin_telegram_id,
             admin_text,
             reply_markup=review_moderation_kb(review.id),
+        ))
+        await message.answer(
+            "🙏 Спасибо! Ваш отзыв отправлен на модерацию",
+            reply_markup=client_main_kb(),
         )
-    except TelegramBadRequest:
-        pass
-
-    await message.answer(
-        "🙏 Спасибо! Ваш отзыв отправлен на модерацию",
-        reply_markup=client_main_kb(),
-    )
+    else:
+        # Duplicate submit — no new admin alert
+        await message.answer(
+            "ℹ️ Ваш отзыв уже получен и находится на модерации",
+            reply_markup=client_main_kb(),
+        )

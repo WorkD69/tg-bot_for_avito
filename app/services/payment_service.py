@@ -11,12 +11,15 @@ class PaymentService:
     def _md5(self, raw: str) -> str:
         return hashlib.md5(raw.encode()).hexdigest().upper()
 
-    def generate_link(self, order_id: int, amount: Decimal, revision: int = 0) -> str:
+    def generate_link(self, invoice_id: str, amount: Decimal) -> str:
         """Build Robokassa payment URL with signature (pass1).
-        revision is appended to InvId description to invalidate old links when price changes.
+
+        invoice_id must be order.payment_invoice_id — versioned as "{order_id}_{revision}".
+        When price changes, payment_invoice_id is updated so old Robokassa links get "not found"
+        on callback and are rejected automatically.
         """
         out_sum = f"{amount:.2f}"
-        inv_id = str(order_id)
+        inv_id = invoice_id
 
         sig_raw = f"{settings.robokassa_login}:{out_sum}:{inv_id}:{settings.robokassa_pass1}"
         signature = self._md5(sig_raw)

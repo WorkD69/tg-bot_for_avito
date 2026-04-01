@@ -52,7 +52,9 @@ async def start_bid(
 
 
 @router.message(BidStates.waiting_price, F.text, IsOperator())
-async def got_bid_price(message: Message, state: FSMContext, session: AsyncSession, user: User):
+async def got_bid_price(
+    message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list
+):
     try:
         amount = Decimal(message.text.strip().replace(",", "."))
         if amount <= 0:
@@ -68,5 +70,6 @@ async def got_bid_price(message: Message, state: FSMContext, session: AsyncSessi
     from app.services.auction_service import AuctionService
     from app.bot.instance import bot
 
-    auction = AuctionService(session=session, bot=bot)
+    # Pass post_commit so all notifications (including auto-close) fire after commit
+    auction = AuctionService(session=session, bot=bot, deferred=post_commit)
     await auction.place_bid(order_id=order_id, operator_id=user.id, amount=amount)

@@ -140,21 +140,57 @@ class OrderRepo:
         order.updated_at = datetime.now(timezone.utc)
         await self.session.flush()
 
+    async def cancel(self, order: Order, cancelled_by: str) -> None:
+        """Atomically transition to cancelled: sets status + cancelled_by in one flush.
+
+        Invariant: cancelled.cancelled_by must be non-null.
+        Using this method instead of update_status ensures the invariant is never violated.
+        """
+        order.status = OrderStatus.cancelled
+        order.cancelled_by = cancelled_by
+        order.updated_at = datetime.now(timezone.utc)
+        await self.session.flush()
+
+    async def confirm_payment(self, order: Order) -> None:
+        """Atomically transition awaiting_payment → in_progress.
+
+        Caller MUST ensure payment_received_at is already set (guard in cmd_confirm_payment).
+        Invariants enforced:
+          - in_progress.payment_confirmed_at is set to now
+          - in_progress.cancelled_by must be null (preserved — not touched here)
+        """
+        now = datetime.now(timezone.utc)
+        order.payment_confirmed_at = now
+        order.status = OrderStatus.in_progress
+        order.updated_at = now
+        await self.session.flush()
+
     async def assign_operator(
         self, order: Order, operator_id: int, payment_amount: Decimal
     ) -> None:
         order.operator_id = operator_id
         order.payment_amount = payment_amount
-        order.payment_invoice_id = str(order.id)
         order.payment_revision = (order.payment_revision or 0) + 1
+        # Invoice ID is versioned: "{order_id}_{revision}" — old revision IDs become stale
+        order.payment_invoice_id = f"{order.id}_{order.payment_revision}"
         order.status = OrderStatus.awaiting_payment
         order.updated_at = datetime.now(timezone.utc)
         await self.session.flush()
 
-    async def update_payment_amount(self, order: Order, new_amount: Decimal) -> None:
-        """Update payment amount (price negotiation) and increment revision to invalidate old links."""
+    async def update_agreed_price(self, order: Order, new_amount: Decimal) -> None:
+        """Agree on a new price after negotiation.
+
+        Called when BOTH parties agree (operator accepts client counter, or operator sets counter).
+        Resets the entire payment state so the new revision must be paid fresh.
+        Increments payment_revision → old Robokassa invoice IDs become stale (not found in DB).
+        """
         order.payment_amount = new_amount
         order.payment_revision = (order.payment_revision or 0) + 1
+        # Versioned invoice ID — old Robokassa callbacks will get "not found"
+        order.payment_invoice_id = f"{order.id}_{order.payment_revision}"
+        # Reset payment state: old payment receipt / confirmation no longer valid for new price
+        order.payment_received_at = None
+        order.payment_confirmed_at = None
         order.updated_at = datetime.now(timezone.utc)
         await self.session.flush()
 

@@ -12,8 +12,9 @@ if TYPE_CHECKING:
 
 
 class MessageDirection(str, enum.Enum):
-    client_to_op = "client_to_operator"
-    op_to_client = "operator_to_client"
+    # .name must match DB enum labels created in migration 0001
+    client_to_operator = "client_to_operator"
+    operator_to_client = "operator_to_client"
 
 
 class Message(Base, TimestampMixin):

@@ -143,8 +143,8 @@ async def solution_done(message: Message, state: FSMContext, session: AsyncSessi
         try:
             await bot.send_message(
                 client.telegram_id,
-                f"✅ Оператор загрузил решение по заявке №{order_id}\n"
-                "📂 Посмотрите в разделе «История заявок»",
+                f"✅ Оператор загрузил файлы решения по заявке №{order_id}\n"
+                "Ожидайте подтверждения завершения",
             )
         except Exception:
             pass

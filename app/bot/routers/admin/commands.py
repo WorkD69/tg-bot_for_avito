@@ -123,32 +123,34 @@ async def cmd_stats(message: Message, session: AsyncSession):
 
 
 @router.message(Command("endauction"), IsAdmin())
-async def cmd_end_auction(message: Message, session: AsyncSession):
+async def cmd_end_auction(message: Message, session: AsyncSession, post_commit: list):
     args = (message.text or "").split(maxsplit=1)
     if len(args) < 2 or not args[1].strip().isdigit():
         await message.answer("Использование: /endauction {order_id}")
         return
 
     order_id = int(args[1].strip())
-    order = await OrderRepo(session).get_by_id(order_id)
-    if not order:
-        await message.answer("❌ Заявка не найдена")
-        return
-    if order.status != OrderStatus.pending:
-        await message.answer(f"⚠️ Заявка №{order_id} не в статусе «На рассмотрении» (статус: {order.status.value})")
-        return
 
-    from app.services.auction_service import AuctionService
+    from app.services.auction_service import AuctionService, AuctionCloseResult
     from app.bot.instance import bot
-
-    # Resolve admin user id for log
     from app.repositories.user_repo import UserRepo
+
     admin = await UserRepo(session).get_by_telegram_id(message.from_user.id)
     actor_id = admin.id if admin else None
 
-    auction = AuctionService(session=session, bot=bot)
-    await auction.close_auction(order_id, actor_id=actor_id)
-    await message.answer(f"✅ Аукцион по заявке №{order_id} завершён")
+    # No pre-check on order.status here — close_auction decides under lock.
+    # Pre-checks are racy and can give misleading feedback in concurrent scenarios.
+    auction = AuctionService(session=session, bot=bot, deferred=post_commit)
+    result = await auction.close_auction(order_id, actor_id=actor_id)
+
+    if result == AuctionCloseResult.not_found:
+        await message.answer("❌ Заявка не найдена")
+    elif result == AuctionCloseResult.already_closed:
+        await message.answer(f"⚠️ Аукцион по заявке №{order_id} уже завершён — заявка не в статусе «На рассмотрении»")
+    elif result == AuctionCloseResult.cancelled_no_bids:
+        await message.answer(f"✅ Аукцион по заявке №{order_id} завершён — ставок не было, заявка отменена")
+    else:
+        await message.answer(f"✅ Аукцион по заявке №{order_id} завершён, оператор назначен")
 
 
 @router.message(Command("confirmpayment"), IsAdmin())
@@ -169,10 +171,14 @@ async def cmd_confirm_payment(message: Message, session: AsyncSession):
         await message.answer(f"⚠️ Заявка №{order_id} не ожидает оплаты (статус: {order.status.value})")
         return
 
-    from datetime import datetime, timezone
-    await order_repo.update_status(order, OrderStatus.in_progress)
-    order.payment_confirmed_at = datetime.now(timezone.utc)
-    await session.flush()
+    if not order.payment_received_at:
+        await message.answer(
+            f"⚠️ Заявка №{order_id}: оплата ещё не зафиксирована\n"
+            "Дождитесь, пока клиент нажмёт «Я оплатил» или придёт callback от Robokassa"
+        )
+        return
+
+    await order_repo.confirm_payment(order)
 
     from app.repositories.user_repo import UserRepo
     admin = await UserRepo(session).get_by_telegram_id(message.from_user.id)
