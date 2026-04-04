@@ -52,9 +52,12 @@ def _history_lines(order: Order) -> list[str]:
 
 # ── Operator card (full info with bids + notes) ───────────────────────────────
 
-def format_order_card(order: Order) -> str:
+def format_order_card(order: Order, is_admin: bool = False) -> str:
     client = order.client
-    client_name = f"@{client.username}" if client.username else client.full_name
+    if is_admin:
+        client_name = f"@{client.username}" if client.username else client.full_name
+    else:
+        client_name = client.full_name
 
     deadline = order.deadline.strftime("%d.%m.%Y") if order.deadline else "—"
     auction_end = _msk(order.auction_end_at)

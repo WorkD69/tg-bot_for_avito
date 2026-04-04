@@ -5,12 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.filters import IsClient
 from app.bot.keyboards.admin_inline import rating_kb, reviews_menu_kb
-from app.bot.keyboards.callbacks import OrderCB, RatingCB, ReviewListCB
+from app.bot.keyboards.callbacks import OrderCB, RatingCB, ReviewListCB  # ReviewListCB kept for "all" handler
 from app.bot.keyboards.client_reply import BTN_REVIEWS, client_main_kb
 from app.bot.states.note import ReviewStates
 from app.config import settings
-from app.db.models.review import ReviewStatus
-from app.db.models.user import User
+from app.db.models.user import User, UserRole
 from app.repositories.order_repo import OrderRepo
 from app.repositories.review_repo import ReviewRepo
 
@@ -32,33 +31,12 @@ async def all_reviews(callback: CallbackQuery, session: AsyncSession):
 
     lines = []
     for r in reviews:
-        name = f"@{r.client.username}" if r.client.username else r.client.full_name
+        name = r.client.full_name
         stars = "⭐" * r.rating
         lines.append(f"{stars} {name}:\n{r.text}")
     await callback.message.answer("\n\n".join(lines))
     await callback.answer()
 
-
-@router.callback_query(ReviewListCB.filter(F.action == "mine"), IsClient())
-async def my_reviews(callback: CallbackQuery, session: AsyncSession, user: User):
-    reviews = await ReviewRepo(session).get_by_client(user.id)
-    if not reviews:
-        await callback.message.answer("📭 У вас пока нет отзывов")
-        await callback.answer()
-        return
-
-    lines = []
-    for r in reviews:
-        if r.status == ReviewStatus.approved:
-            status = "✅ одобрен"
-        elif r.status == ReviewStatus.pending:
-            status = "⏳ на модерации"
-        else:
-            status = "❌ отклонён"
-        stars = "⭐" * r.rating
-        lines.append(f"{status} {stars}: {r.text}")
-    await callback.message.answer("\n\n".join(lines))
-    await callback.answer()
 
 
 # ── Leave review FSM ──────────────────────────────────────────────────────────
@@ -117,6 +95,9 @@ async def got_review_text(
     )
     await state.clear()
 
+    # Only show client reply keyboard for actual clients — operators/admins don't use it
+    reply_kb = client_main_kb() if user.role == UserRole.client else None
+
     if is_new:
         # Defer admin notification — fires after commit so admin sees a committed review
         from app.bot.keyboards.admin_inline import review_moderation_kb
@@ -131,13 +112,10 @@ async def got_review_text(
             admin_text,
             reply_markup=review_moderation_kb(review.id),
         ))
-        await message.answer(
-            "🙏 Спасибо! Ваш отзыв отправлен на модерацию",
-            reply_markup=client_main_kb(),
-        )
+        await message.answer("🙏 Спасибо за обратную связь!", reply_markup=reply_kb)
     else:
         # Duplicate submit — no new admin alert
         await message.answer(
             "ℹ️ Ваш отзыв уже получен и находится на модерации",
-            reply_markup=client_main_kb(),
+            reply_markup=reply_kb,
         )

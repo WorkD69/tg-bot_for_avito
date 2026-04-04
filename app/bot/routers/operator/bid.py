@@ -23,6 +23,15 @@ async def start_bid(
     session: AsyncSession,
     user: User,
 ):
+    from app.bot.states.note import SolutionStates
+    current_state = await state.get_state()
+    if current_state == SolutionStates.waiting_files:
+        await callback.answer(
+            "⚠️ Загрузка решения в процессе — сначала завершите /done",
+            show_alert=True,
+        )
+        return
+
     order = await OrderRepo(session).get_by_id(callback_data.order_id)
     if not order:
         await callback.answer("❌ Заявка не найдена", show_alert=True)

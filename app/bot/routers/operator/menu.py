@@ -104,7 +104,8 @@ async def group_view_order(
         await callback.answer("❌ Заявка не найдена", show_alert=True)
         return
 
-    text = format_order_card(order)
+    from app.db.models.user import UserRole
+    text = format_order_card(order, is_admin=(user.role == UserRole.admin))
     kb = _pick_kb(order, user.id)
 
     try:
@@ -131,57 +132,12 @@ async def dm_view_order(
         await callback.answer("❌ Заявка не найдена", show_alert=True)
         return
 
-    text = format_order_card(order)
+    from app.db.models.user import UserRole
+    text = format_order_card(order, is_admin=(user.role == UserRole.admin))
     kb = _pick_kb(order, user.id)
 
     await callback.message.answer(text, reply_markup=kb)
     await callback.answer()
-
-
-# ── "✅ Завершить заявку" ─────────────────────────────────────────────────────
-
-@router.callback_query(OrderCB.filter(F.action == "complete"), IsOperator())
-async def complete_order(
-    callback: CallbackQuery,
-    callback_data: OrderCB,
-    session: AsyncSession,
-    user: User,
-):
-    order_repo = OrderRepo(session)
-    order = await order_repo.get_by_id_for_update(callback_data.order_id)
-    if not order or order.operator_id != user.id:
-        await callback.answer("❌ Заявка не найдена или не ваша", show_alert=True)
-        return
-    if order.status != OrderStatus.in_progress:
-        await callback.answer("⚠️ Заявку можно завершить только в статусе «В работе»", show_alert=True)
-        return
-    if not order.solution_uploaded_at:
-        await callback.answer("⚠️ Сначала загрузите решение", show_alert=True)
-        return
-
-    from datetime import datetime, timezone
-    from app.db.models.order_log import OrderLogAction
-    await order_repo.update_status(order, OrderStatus.completed)
-    await order_repo.add_log(
-        order_id=order.id, actor_id=user.id, action=OrderLogAction.completed,
-    )
-
-    await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer(f"✅ Заявка №{order.id} завершена")
-    await callback.answer()
-
-    from app.repositories.user_repo import UserRepo
-    client = await UserRepo(session).get_by_id(order.client_id)
-    if client:
-        from app.bot.instance import bot
-        try:
-            await bot.send_message(
-                client.telegram_id,
-                f"🎉 Заявка №{order.id} выполнена!\n"
-                "📂 Посмотрите решение в разделе «История заявок»",
-            )
-        except Exception:
-            pass
 
 
 # ── "← Назад" from files view → restore order card ──────────────────────────
@@ -198,7 +154,8 @@ async def back_to_card(
         await callback.answer("❌ Заявка не найдена", show_alert=True)
         return
 
-    text = format_order_card(order)
+    from app.db.models.user import UserRole
+    text = format_order_card(order, is_admin=(user.role == UserRole.admin))
     kb = _pick_kb(order, user.id)
 
     await callback.message.edit_text(text, reply_markup=kb)

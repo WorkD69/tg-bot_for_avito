@@ -59,12 +59,6 @@ def my_order_card_kb(order_id: int) -> InlineKeyboardMarkup:
                     callback_data=OrderCB(order_id=order_id, action="solution").pack(),
                 ),
             ],
-            [
-                InlineKeyboardButton(
-                    text="✅ Завершить заявку",
-                    callback_data=OrderCB(order_id=order_id, action="complete").pack(),
-                ),
-            ],
         ]
     )
 
@@ -83,6 +77,10 @@ def awaiting_payment_operator_kb(order_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text="Файлы",
                     callback_data=OrderCB(order_id=order_id, action="files").pack(),
+                ),
+                InlineKeyboardButton(
+                    text="Написать клиенту",
+                    callback_data=OrderCB(order_id=order_id, action="msg").pack(),
                 ),
             ],
         ]

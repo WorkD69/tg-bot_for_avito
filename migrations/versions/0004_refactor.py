@@ -78,38 +78,25 @@ def upgrade() -> None:
     """)
 
     # ── 6. Create order_logs table ────────────────────────────────────────────
-    orderlogaction = sa.Enum(
-        "created", "bid_placed", "auction_closed", "operator_assigned",
-        "payment_received", "payment_confirmed", "price_updated",
-        "solution_uploaded", "completed", "cancelled",
-        "comment_added", "files_added",
-        name="orderlogaction",
-    )
-    orderlogaction.create(op.get_bind(), checkfirst=True)
-
-    op.create_table(
-        "order_logs",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("order_id", sa.Integer(), nullable=False),
-        sa.Column("actor_id", sa.Integer(), nullable=True),
-        sa.Column(
-            "action",
-            sa.Enum(
-                "created", "bid_placed", "auction_closed", "operator_assigned",
-                "payment_received", "payment_confirmed", "price_updated",
-                "solution_uploaded", "completed", "cancelled",
-                "comment_added", "files_added",
-                name="orderlogaction",
-            ),
-            nullable=False,
-        ),
-        sa.Column("detail", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["order_id"], ["orders.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["actor_id"], ["users.id"], ondelete="SET NULL"),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("ix_order_logs_order_id", "order_logs", ["order_id"])
+    op.execute("""
+        CREATE TYPE orderlogaction AS ENUM (
+            'created', 'bid_placed', 'auction_closed', 'operator_assigned',
+            'payment_received', 'payment_confirmed', 'price_updated',
+            'solution_uploaded', 'completed', 'cancelled',
+            'comment_added', 'files_added'
+        )
+    """)
+    op.execute("""
+        CREATE TABLE order_logs (
+            id SERIAL PRIMARY KEY,
+            order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+            actor_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            action orderlogaction NOT NULL,
+            detail TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+    """)
+    op.execute("CREATE INDEX ix_order_logs_order_id ON order_logs(order_id)")
 
 
 def downgrade() -> None:

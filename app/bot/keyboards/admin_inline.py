@@ -43,10 +43,6 @@ def reviews_menu_kb() -> InlineKeyboardMarkup:
                     text="Отзывы о нас",
                     callback_data=ReviewListCB(action="all").pack(),
                 ),
-                InlineKeyboardButton(
-                    text="Мои отзывы",
-                    callback_data=ReviewListCB(action="mine").pack(),
-                ),
             ]
         ]
     )

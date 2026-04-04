@@ -84,7 +84,10 @@ async def back_to_orders_list(
     callback_data: OrderCB,
     user: User,
 ):
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     orders = await OrderRepo(session).get_client_active_orders(user.id)
     if not orders:
         await callback.message.answer("📭 У вас нет активных заявок")
@@ -100,7 +103,10 @@ async def back_to_history_list(
     callback_data: OrderCB,
     user: User,
 ):
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     orders = await OrderRepo(session).get_client_history(user.id)
     if not orders:
         await callback.message.answer("📭 История заявок пуста")
@@ -139,7 +145,10 @@ async def cancel_order_prompt(
 
 @router.callback_query(OrderCB.filter(F.action == "cancel_no"), IsClient())
 async def cancel_order_no(callback: CallbackQuery, callback_data: OrderCB):
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except Exception:
+        pass
     await callback.answer()
 
 
@@ -305,7 +314,7 @@ async def client_negotiate_done(message: Message, state: FSMContext, session: As
     if operator:
         from app.bot.instance import bot
         from app.bot.keyboards.order_inline import negot_operator_kb
-        client_name = f"@{user.username}" if user.username else user.full_name
+        client_name = user.full_name
         proposed_str = str(counter_amount) if counter_amount else ""
         counter_label = f"\n💰 Предложенная сумма: {_money(counter_amount)}" if counter_amount else ""
         try:
@@ -401,7 +410,7 @@ async def add_files_start(
         await callback.answer(f"⚠️ Достигнут лимит {MAX_FILES} файлов", show_alert=True)
         return
     await state.set_state(OrderEditStates.waiting_files)
-    await state.update_data(order_id=order.id)
+    await state.update_data(order_id=order.id, files_added=0)
     await callback.message.answer("📎 Отправьте файлы, когда закончите — /done:")
     await callback.answer()
 
@@ -430,6 +439,9 @@ async def _save_file(message: Message, state: FSMContext, session: AsyncSession,
         return
     session.add(OrderFile(order_id=order_id, telegram_file_id=file_id, file_type=file_type))
     await session.flush()
+    data = await state.get_data()
+    files_added = data.get("files_added", 0) + 1
+    await state.update_data(files_added=files_added)
     await message.answer(f"✅ Файл добавлен ({current_count + 1}/{MAX_FILES}) — ещё или /done")
 
 
@@ -439,6 +451,10 @@ async def add_files_done(
 ):
     data = await state.get_data()
     order_id: int = data["order_id"]
+    if not data.get("files_added", 0):
+        await state.clear()
+        await message.answer("❌ Вы не отправили ни одного файла — добавление отменено")
+        return
     await state.clear()
 
     order_repo = OrderRepo(session)
@@ -490,3 +506,14 @@ async def view_solution(
             await callback.message.answer_photo(sf.telegram_file_id)
         else:
             await callback.message.answer_document(sf.telegram_file_id)
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    await callback.message.answer(
+        "⬆️ Файлы выше",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="← История заявок",
+                callback_data=OrderCB(order_id=order.id, action="back_history").pack(),
+            )
+        ]]),
+    )

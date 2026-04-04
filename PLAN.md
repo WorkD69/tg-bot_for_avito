@@ -39,11 +39,11 @@ tg-bot_for_avito/
 │   │   │   │   ├── menu.py        # Группа: "Перейти к заявке", reply-кнопки → DM
 │   │   │   │   ├── order_list.py  # Файлы (edit) / ← Назад
 │   │   │   │   ├── bid.py         # FSM: ставка "Могу взять"
-│   │   │   │   ├── messaging.py   # Прокси оператор→клиент
-│   │   │   │   └── notes.py       # FSM: заметка к заявке
+│   │   │   │   ├── messaging.py   # Прокси оператор→клиент + переговоры по цене
+│   │   │   │   └── notes.py       # FSM: заметка + загрузка решения с комментарием
 │   │   │   └── admin/
 │   │   │       ├── commands.py    # /addoperator /deleteoperator /operators /admins
-│   │   │       │                  # /stats /endauction /confirmpayment /commands
+│   │   │       │                  # /stats /endauction /confirmpayment /completeorder /commands
 │   │   │       └── reviews.py     # Модерация отзывов (одобрить/отклонить)
 │   │   ├── filters/
 │   │   │   ├── is_admin.py        # telegram_id == settings.admin_telegram_id
@@ -55,13 +55,15 @@ tg-bot_for_avito/
 │   │   │   ├── operator_reply.py  # 3 reply-кнопки (в группе)
 │   │   │   ├── order_inline.py    # Все inline-клавиатуры для карточек заявок
 │   │   │   ├── admin_inline.py    # Одобрить/Отклонить отзыв, rating_kb (звёзды)
-│   │   │   └── callbacks.py       # OrderCB, ReviewCB, ReviewListCB, RatingCB
+│   │   │   └── callbacks.py       # OrderCB, NegotCB, ReviewCB, ReviewListCB, RatingCB
 │   │   ├── states/
 │   │   │   ├── order_create.py    # waiting_files → comment → deadline → budget
 │   │   │   ├── bid.py             # waiting_price
-│   │   │   └── note.py            # OrderEditStates, NoteStates, MessagingStates,
-│   │   │                          # SolutionStates, ReviewStates (waiting_rating, waiting_text)
-│   │   ├── formatters.py          # format_order_card, format_client_card,
+│   │   │   └── note.py            # NoteStates, SolutionStates, MessagingStates,
+│   │   │                          # ClientMessagingStates, OrderEditStates,
+│   │   │                          # NegotiationStates, CounterOfferStates,
+│   │   │                          # RequisitesStates, ReviewStates
+│   │   ├── formatters.py          # format_order_card(is_admin), format_client_card,
 │   │   │                          # format_client_history_card, _money(), _history_lines()
 │   │   └── middlewares/
 │   │       ├── db_session.py      # AsyncSession per update (commit/rollback)
@@ -70,25 +72,26 @@ tg-bot_for_avito/
 │   │   ├── base.py                # DeclarativeBase + TimestampMixin
 │   │   ├── engine.py              # create_async_engine + async_sessionmaker
 │   │   └── models/
-│   │       ├── user.py
-│   │       ├── order.py
-│   │       ├── order_file.py      # telegram_file_id (не file_id!)
-│   │       ├── solution_file.py   # telegram_file_id (не file_id!)
-│   │       ├── bid.py
-│   │       ├── review.py          # rating INT (добавлен миграцией 0003)
-│   │       ├── message.py
+│   │       ├── user.py            # UserRole: client / operator / admin
+│   │       ├── order.py           # OrderStatus enum + доп. поля жизненного цикла
+│   │       ├── order_file.py      # telegram_file_id, file_type
+│   │       ├── solution_file.py   # telegram_file_id, file_type
+│   │       ├── order_log.py       # OrderLogAction enum, actor_id, detail
+│   │       ├── bid.py             # unique(order_id, operator_id) — upsert через INSERT ON CONFLICT
+│   │       ├── review.py          # rating INT, status ENUM(pending/approved/rejected)
+│   │       ├── message.py         # MessageDirection: client_to_operator / operator_to_client
 │   │       └── operator_note.py
 │   ├── repositories/
 │   │   ├── user_repo.py           # get_by_role() для /operators /admins
-│   │   ├── order_repo.py
-│   │   ├── bid_repo.py            # get_min_bid: ORDER BY amount, created_at
-│   │   ├── review_repo.py         # create(rating=) параметр
+│   │   ├── order_repo.py          # get_by_id_for_update, assign_operator, update_agreed_price
+│   │   ├── bid_repo.py            # upsert, get_min_bid (ORDER BY amount, created_at), get_losers
+│   │   ├── review_repo.py         # create(rating=), get_approved, set_status
 │   │   └── message_repo.py
 │   ├── services/
-│   │   ├── auction_service.py     # start_auction, place_bid, close_auction
+│   │   ├── auction_service.py     # start_auction, place_bid, close_auction, recover_overdue
 │   │   └── payment_service.py     # Robokassa: generate_link + verify_callback
 │   ├── scheduler/
-│   │   └── setup.py               # AsyncIOScheduler + SQLAlchemy jobstore (sync URL)
+│   │   └── setup.py               # AsyncIOScheduler + SQLAlchemy jobstore (sync URL!)
 │   └── api/
 │       ├── webhook.py             # POST /telegram/webhook
 │       └── payment.py             # POST /payment/robokassa
@@ -97,12 +100,16 @@ tg-bot_for_avito/
 │   └── versions/
 │       ├── 0001_initial.py        # Все таблицы (создана вручную)
 │       ├── 0002_fix_columns.py    # file_id → telegram_file_id, drop stale columns
-│       └── 0003_add_review_rating.py # rating column в reviews
+│       ├── 0003_add_review_rating.py # rating column в reviews
+│       ├── 0004_refactor.py       # order_logs, review status enum, bid unique,
+│       │                          # solution_files.file_type, order lifecycle fields
+│       └── 0005_schema_fixes.py   # bids.amount precision Numeric(12,2),
+│                                  # messages.text NOT NULL
 ├── .env.example
 ├── alembic.ini
 ├── docker-compose.yml
 ├── Dockerfile
-└── requirements.txt               # + python-multipart (FastAPI Form POST)
+└── requirements.txt
 ```
 
 ---
@@ -116,29 +123,40 @@ SQLAlchemy хранит **Python-имена enum** (не `.value`). В БД: `pe
 |-------------|--------------|-------|
 | `pending` | `На рассмотрении` | Аукцион идёт |
 | `awaiting_payment` | `Ожидает оплаты` | Оператор назначен, ждём оплаты |
-| `in_progress` | `В работе` | Оплачено, оператор работает |
-| `completed` | `Выполнено` | Оператор сдал решение |
-| `cancelled` | `Отменено` | Нет ставок / клиент отменил |
+| `in_progress` | `В работе` | Оплата подтверждена, оператор работает |
+| `completed` | `Выполнено` | Оператор загрузил решение (авто-завершение) |
+| `cancelled` | `Отменено` | Нет ставок / отменил клиент/оператор/система |
+
+Дополнительные поля жизненного цикла в `orders` (не новые статусы):
+- `payment_received_at` — момент, когда пришёл Robokassa callback или клиент нажал «Я оплатил»
+- `payment_confirmed_at` — момент, когда админ нажал `/confirmpayment`
+- `solution_uploaded_at` — момент загрузки решения оператором (авто-завершение после этого)
+- `payment_revision` — счётчик, инкрементируется при изменении цены (старые Robokassa-ссылки инвалидируются)
+- `cancelled_by` — `"client"` / `"operator"` / `"system"` / `"admin"`
 
 ### Ключевые модели
 
 **users**: `id, telegram_id BIGINT, username, full_name, role ENUM(client/operator/admin), created_at`
 
-**orders**: `id, client_id FK, operator_id FK nullable, status ENUM, comment TEXT, deadline DATE, budget NUMERIC, auction_end_at TIMESTAMP, updated_at, payment_amount NUMERIC, payment_invoice_id VARCHAR unique, group_message_id BIGINT, created_at`
+**orders**: `id, client_id FK, operator_id FK nullable, status ENUM, comment TEXT, deadline DATE, budget NUMERIC(12,2), payment_amount NUMERIC(12,2), payment_invoice_id VARCHAR unique, auction_end_at TIMESTAMP, group_message_id BIGINT, payment_received_at, payment_confirmed_at, solution_uploaded_at, payment_revision INT DEFAULT 0, cancelled_by VARCHAR, created_at, updated_at`
 
-> `comment` хранит записи в формате `"ISO_TS|текст"`, разделённые `"\n---\n"`. Позволяет хранить несколько комментариев с точным временем каждого.
+> `comment` хранит записи в формате `"ISO_TS|текст"`, разделённые `"\n---\n"`. Позволяет хранить несколько комментариев клиента с точным временем каждого.
 
 **order_files**: `id, order_id FK, telegram_file_id, file_type, created_at`
 
-**solution_files**: `id, order_id FK, telegram_file_id, created_at`
+**solution_files**: `id, order_id FK, telegram_file_id, file_type, created_at`
 
-**bids**: `id, order_id FK, operator_id FK, amount NUMERIC, created_at`
+**bids**: `id, order_id FK, operator_id FK, amount NUMERIC(12,2), created_at` + `UNIQUE(order_id, operator_id)` → upsert через `INSERT … ON CONFLICT DO UPDATE`
 
-**reviews**: `id, order_id FK, client_id FK, rating INT DEFAULT 5, text TEXT, is_approved BOOL DEFAULT false, created_at`
+**reviews**: `id, order_id FK, client_id FK, rating INT DEFAULT 5, text TEXT NOT NULL, status ENUM(pending/approved/rejected) DEFAULT pending, moderated_by FK nullable, moderated_at nullable, created_at` + `UNIQUE(order_id, client_id)`
 
-**messages**: `id, order_id FK, sender_id FK, text TEXT, direction ENUM(client_to_op/op_to_client), created_at`
+**messages**: `id, order_id FK, sender_id FK, text TEXT NOT NULL, direction ENUM(client_to_operator/operator_to_client), created_at`
+
+> **Важно:** Python-имена MessageDirection: `client_to_operator` и `operator_to_client`. НЕ использовать старые алиасы `client_to_op`/`op_to_client`.
 
 **operator_notes**: `id, order_id FK, operator_id FK, text TEXT, created_at`
+
+**order_logs**: `id, order_id FK, actor_id FK nullable, action ENUM(created/bid_placed/auction_closed/operator_assigned/payment_received/payment_confirmed/completed/cancelled/price_updated/solution_uploaded/comment_added/files_added), detail VARCHAR nullable, created_at`
 
 ---
 
@@ -150,65 +168,108 @@ SQLAlchemy хранит **Python-имена enum** (не `.value`). В БД: `pe
   → waiting_files  (до 10 файлов, /done для завершения — файлы опциональны)
   → waiting_comment ("-" для пропуска; иначе сохраняется с UTC timestamp)
   → waiting_deadline (ДД.ММ.ГГГГ, не раньше сегодня по МСК UTC+3)
-  → waiting_budget (число, лимит 5 активных заявок на клиента)
+  → waiting_budget (число > 0, лимит 5 активных заявок на клиента — двойная проверка)
   → create order in DB
   → AuctionService.start_auction(order)
      → post в группу: "🆕 Новая заявка №{id} создана" + кнопка "Перейти к заявке"
      → post в группу: "📋 Выберите действие:" + reply keyboard (3 кнопки)
      → APScheduler: job на auction_end_at = now() + 120 min
-  → "🎉 Ваша заявка создана! Ожидайте, пока операторы возьмут её в работу
-     📋 Статус заявки вы можете посмотреть в разделе «Текущие заявки»"
+  → клиенту: "🎉 Ваша заявка создана! Ожидайте, пока операторы возьмут её в работу
+              📋 Статус заявки вы можете посмотреть в разделе «Текущие заявки»"
 ```
 
-**Файлы опциональны** — клиент может отправить `/done` без файлов.
-**Дедлайн** — проверяется по московскому времени.
-**Лимит** — не более 5 активных заявок на клиента одновременно.
-
 ### Аукцион
-- Оператор нажимает "Могу взять" в **личке с ботом** → FSM waiting_price → вводит сумму
+- Оператор нажимает "Могу взять" в **личке с ботом** → FSM `BidStates.waiting_price` → вводит сумму
 - `AuctionService.place_bid(order_id, operator_id, amount)`:
-  - `operator_id` — DB id, **не** telegram_id. Telegram_id берётся через `UserRepo.get_by_id()`
-  - Если `bid.amount == order.budget` → **авто-назначение**
-  - Иначе → оператору отправляется обновлённая карточка заявки с актуальными ставками
+  - `operator_id` — DB id (FK в bids), **не** telegram_id. Telegram_id берётся через `UserRepo.get_by_id()`
+  - Если `bid.amount == order.budget` → **авто-назначение** (`close_auction` сразу)
+  - Иначе → оператору отправляется обновлённая карточка с его ставкой в списке
   - `session.expire_all()` перед перезагрузкой заявки — иначе новая ставка не видна
-- При равных ставках — побеждает тот, кто поставил **раньше** (`ORDER BY amount, created_at`)
+- При равных ставках — побеждает тот, кто поставил **раньше** (`ORDER BY amount ASC, created_at ASC`)
 - По истечении 120 мин или `/endauction {id}` от админа:
-  - Нет ставок → клиенту: "К сожалению, из-за большой нагруженности у операторов нет возможности выполнить вашу работу" → статус `Отменено`
+  - Нет ставок → заявка отменяется (`cancelled_by="system"`), клиент уведомлён, admin уведомлён
   - Есть ставки → `min(bids, key=(amount, created_at))` → назначить оператора
+- `close_auction` — идемпотентна, работает под `SELECT FOR UPDATE`
 
 ### Оплата
 ```
 Если ROBOKASSA_LOGIN настроен:
-  generate_link → клиенту ссылка → Robokassa callback → /payment/robokassa
-  → verify sig → order.status = in_progress → уведомить обе стороны
-  Response: f"OK{InvId}"
+  generate_link → клиенту ссылка → Robokassa POST /payment/robokassa
+  → verify sig (MD5(OutSum:InvId:pass2).upper()) → payment_received_at = now()
+  → статус остаётся awaiting_payment → уведомить admin для подтверждения
+  Response: f"OK{InvId}"  ← точная строка, иначе Robokassa будет повторять
 
-Если ROBOKASSA_LOGIN пуст (режим разработки):
-  → клиенту: "Реквизиты пришлёт администратор"
-  → админу: "💳 Заявка №{id} ожидает ручного подтверждения. /confirmpayment {id}"
-  → /confirmpayment {id} → order.status = in_progress → уведомить обе стороны
+Если ROBOKASSA_LOGIN пуст (ручной режим):
+  → клиент видит "Я оплатил" кнопку → нажимает → payment_received_at = now()
+  → admin получает: "💳 Клиент сообщил об оплате. Сумма: X ₽. /confirmpayment {id}"
+
+В обоих случаях переход в in_progress только через:
+  /confirmpayment {id} → payment_confirmed_at = now() → статус = in_progress
+  → клиент и оператор уведомлены
 ```
 
-### Уведомления оператора о действиях клиента
-При любом изменении заявки клиентом в операторский чат приходит уведомление + кнопка "Перейти к заявке":
-- Добавлен комментарий: `"✏️ К заявке №{id} добавлен комментарий клиентом"`
-- Добавлены файлы: `"📎 К заявке №{id} добавлены файлы клиентом"`
-- Заявка отменена: `"❌ Заявка №{id} отменена клиентом"`
+### Загрузка решения (FSM оператора)
+```
+"Отправить решение"
+  → SolutionStates.waiting_files, state: {order_id, files=[], comment=""}
+  → Оператор отправляет файлы (фото/документы) — добавляются в files[]
+  → Оператор отправляет текст — сохраняется как comment (последний перезаписывает)
+  → /done
+     → если нет файлов → ошибка
+     → сохранить SolutionFile записи в БД
+     → если есть comment → сохранить как Message(direction=operator_to_client) в БД
+     → solution_uploaded_at = now()
+     → update_status(completed)  ← авто-завершение, без шага admin
+     → уведомить клиента: "🎉 Заявка №{id} выполнена!\n💬 Комментарий оператора: {comment}\n📂 Посмотрите в разделе «История заявок»"
+```
+Комментарий виден клиенту: в уведомлении + в карточке «История взаимодействия» (🔧 Оператор).
+
+### Переговоры по цене (awaiting_payment)
+```
+Клиент: "Обсудить цену" → NegotiationStates.waiting_text → пишет текст или сумму
+  → если число → counter_amount передаётся в NegotCB.proposed_amount
+  → оператор получает: клиентское сообщение + negot_operator_kb
+
+Оператор отвечает:
+  ✅ Принять предложение → negot_accept
+     → payment_amount = proposed_amount (если было число)
+     → payment_revision++ → старые Robokassa-ссылки инвалидированы
+     → клиент уведомлён о новой цене + send_requisites_kb для оператора
+
+  💬 Встречная сумма → negot_counter → CounterOfferStates.waiting_amount
+     → формат: "3700" или "3700 Минимальная стоимость работы"
+     → payment_amount = amount, payment_revision++
+     → клиент уведомлён о новой сумме (+ комментарий если есть)
+     → в Robokassa-режиме: новая ссылка для оплаты
+     → send_requisites_kb для оператора
+
+  ❌ Отменить заявку → negot_cancel_order
+     → order.cancelled_by = "operator", статус = cancelled
+     → клиент уведомлён
+     → группа операторов уведомлена ("❌ Заявка №{id} отменена оператором")
+```
+
+### Уведомления операторской группы
+При любом изменении заявки:
+- Новая заявка: `"🆕 Новая заявка №{id} создана"` + кнопка "Перейти к заявке"
+- Клиент добавил комментарий: `"✏️ К заявке №{id} добавлен комментарий клиентом"` + кнопка
+- Клиент добавил файлы: `"📎 К заявке №{id} добавлены файлы клиентом"` + кнопка
+- Клиент отменил: `"❌ Заявка №{id} отменена клиентом"` + кнопка
+- Оператор отменил: `"❌ Заявка №{id} отменена оператором"` + кнопка
 
 ### Отзывы (FSM: 2 шага)
 ```
-Клиент нажимает "Оставить отзыв"
-  → bot показывает inline-клавиатуру со звёздами (1–5, RatingCB)
-  → Клиент выбирает оценку → waiting_text
-  → Клиент пишет текст
-  → Review сохраняется в БД (rating + text)
+Клиент нажимает "⭐ Оставить отзыв" (только на карточке выполненной заявки)
+  → bot показывает inline rating_kb (1–5 звёзд, RatingCB)
+  → Клиент выбирает оценку → ReviewStates.waiting_text
+  → Клиент пишет текст → Review сохраняется (status=pending, rating, text)
+  → "🙏 Спасибо за обратную связь!"
+     → клиент: client_main_kb() только если user.role == UserRole.client
+        (оператор/админ тестирующий клиентский флоу — клавиатура не меняется)
   → Администратор получает уведомление + Одобрить/Отклонить
 ```
-
-### Бот-прокси (переписка)
-- **Клиент пишет** через "Написать оператору" → бот шлёт в личку оператора + логирует в `messages`
-- **Оператор пишет** через "Написать клиенту" → FSM → `bot.send_message(client.telegram_id, ...)` + лог
-- История сообщений отображается в карточке заявки
+- В "Отзывы о нас" видны только approved. Показывается `full_name` (не @username).
+- Повторная отправка отзыва по той же заявке → идемпотентна.
 
 ---
 
@@ -218,107 +279,68 @@ SQLAlchemy хранит **Python-имена enum** (не `.value`). В БД: `pe
 
 **Reply-кнопки**: `Создать заявку` | `Текущие заявки` | `История заявок` | `Отзывы`
 
-**Создание заявки**: сообщение при старте FSM — `"📎 Отправьте файлы с заданием (до 10 штук)\nКогда закончите — отправьте /done"`
+**Текущие заявки** → статусы pending/awaiting_payment/in_progress → `client_orders_list_kb` (`action="client_view"`)
 
-**Текущие заявки** → статус не в {Выполнено, Отменено} → `client_orders_list_kb` (`action="client_view"`)
+Нажатие на заявку → `format_client_card(order)` или специальная карточка по статусу:
 
-Нажатие на заявку → `format_client_card(order)` (без ставок и имён операторов):
-```
-📌 Заявка №{id}
-Статус: {status}
-Дата создания: {dd.mm.yyyy hh:mm} МСК
-Дедлайн: {dd.mm.yyyy}
-Желаемый бюджет: {budget} ₽
-Прикреплённых файлов: {N}
-История взаимодействия:
-[{dd.mm.yyyy hh:mm}] 👤 Клиент (комментарий): {text}
-[{dd.mm hh:mm}] 🔧 Оператор: {text}
-```
-Кнопки: `✏️ Добавить комментарий` | `📎 Добавить файлы` | `❌ Отменить заявку` (если pending) | `← Назад`
-- "← Назад" **удаляет** карточку и показывает список заново
+| Статус | Карточка | Клавиатура |
+|--------|----------|------------|
+| `pending` / `in_progress` | `format_client_card` | Добавить комментарий \| Добавить файлы \| (Отменить если pending) \| ← Назад |
+| `awaiting_payment` | `format_client_card` | (Я оплатил — только в ручном режиме) \| Обсудить цену \| Отменить \| ← Назад |
+| `completed` | `format_client_history_card` | 📂 Решение \| 💬 Задать вопрос \| ⭐ Оставить отзыв \| ← Назад |
+| `cancelled` | `format_client_history_card` | ← Назад |
 
-**История заявок** → статус в {Выполнено, Отменено} → `client_orders_list_kb` (`action="client_view"`)
+- "← Назад" — **удаляет** сообщение-карточку (try/except на случай старого сообщения) и показывает список
+- "Отменить заявку" → подтверждение → "Да/Нет". "Нет" удаляет подтверждение (try/except)
+- "📂 Решение" → бот отправляет файлы + после последнего файла кнопка "← История заявок"
+- "💬 Задать вопрос" (action="client_msg") — доступен для completed заявок; заблокирован только для cancelled
+- "↩️ Ответить оператору" — кнопка в сообщении от оператора; заблокирована если заявка cancelled
 
-Нажатие на заявку → `format_client_history_card(order)`:
-```
-📌 Заявка №{id}
-Статус: {status}
-Дата создания: {dd.mm.yyyy hh:mm} МСК
-Дата выполнения/отмены: {dd.mm.yyyy hh:mm} МСК
-Дедлайн: {dd.mm.yyyy}
-Желаемый бюджет: {budget} ₽
-Прикреплённых файлов: {N}
-История взаимодействия: ...
-```
-- **Выполнено**: кнопки `📂 Решение` | `💬 Задать вопрос` | `⭐ Оставить отзыв` | `← Назад`
-- **Отменено**: только `← Назад`
-- "← Назад" **удаляет** карточку и показывает историю
+**История заявок** → статусы completed/cancelled → тот же `client_orders_list_kb`
 
-**Отмена заявки**: сначала подтверждение с кнопками `✅ Да, отменить` и `← Нет, назад`
-- "← Нет, назад" **удаляет** сообщение-подтверждение
+### Оператор
 
-### Операторская группа + личка оператора
+**В группе**: `Свободные заявки` | `Мои заявки` | `История выполненных заявок`
+→ ответ отправляется в **личку** оператора (не в группу)
 
-#### Принцип изоляции
-> **Группа — только уведомления. Все действия — в личке с ботом.**
+**"Перейти к заявке"** (inline в группе) → карточка в личке, или алерт "напишите /start"
 
-**Reply-кнопки в группе**: `Свободные заявки` | `Мои заявки` | `История выполненных заявок`
-Каждая → список отправляется **в личку** оператора, в группе ничего не отвечаем.
+**Карточка оператора** — `format_order_card(order, is_admin=False)`:
+- **Обычный оператор**: видит `full_name` клиента (без @username)
+- **Администратор**: видит `@username` клиента (передаётся `is_admin=True`)
+- Содержит: ставки всех операторов, история взаимодействия (до 10 записей), заметки оператора
 
-**"Перейти к заявке"** (inline в группе):
-```
-→ try: bot.send_message(operator.telegram_id, card, kb)
-  except: callback.answer("Напишите боту /start в личных сообщениях", show_alert=True)
-```
-Оператор **обязан** написать боту /start в личке хотя бы раз — иначе бот не может инициировать диалог.
+| Статус заявки | Кнопки |
+|--------------|--------|
+| `pending` (свободная) | Могу взять \| Файлы |
+| `in_progress` (моя) | Файлы \| Написать клиенту \| Добавить заметку \| Отправить решение |
+| `awaiting_payment` (моя) | 📤 Отправить реквизиты \| Файлы \| Написать клиенту |
+| `completed` / `cancelled` | нет кнопок |
 
-**Карточка заявки (в DM оператора)**:
-```
-📌 Заявка №{id}
-Статус: {status}
-Клиент: @{username}
-Дата создания: {dd.mm.yyyy hh:mm} МСК
-Дедлайн: {dd.mm.yyyy}
-Желаемый бюджет: {budget} ₽
-Сбор цен до: {auction_end} МСК
-Ставки операторов:
-  • {op1_name}: {amount} ₽
-  • {op2_name}: {amount} ₽
-  (или: "Ставок пока нет")
-История взаимодействия:
-[{dd.mm.yyyy hh:mm}] 👤 Клиент (комментарий): {text}
-[{dd.mm hh:mm}] 👤 Клиент: {text}
-[{dd.mm hh:mm}] 🔧 Оператор: {text}
-  (или: "Сообщений пока нет")
-```
-Кнопки (свободная заявка): `Могу взять` | `Файлы`
-Кнопки (моя заявка): `Файлы` | `Написать клиенту` | `Добавить заметку` | `Отправить решение`
+**FSM-защиты (SolutionStates.waiting_files)**:
+Пока идёт загрузка решения — кнопки "Написать клиенту", "Добавить заметку", "Могу взять" возвращают алерт вместо сброса FSM.
 
-**Кнопка "Файлы"** — edit pattern:
+**Написать клиенту** → оператор вводит текст → клиент получает сообщение + кнопка "↩️ Ответить оператору"
+
+**"Файлы"** — edit pattern:
 ```
 → edit_message_text → "📎 Файлы по заявке №{id}:" + кнопка "← Назад"
-→ send files as reply
+→ send files as reply to that message
 ← Назад → edit_message_text обратно в карточку
 ```
-
-**После ставки** — оператор получает обновлённую карточку с его ставкой в списке.
 
 ### Администратор (DM)
 
 Команды (все только в личке, IsAdmin):
 - `/addoperator @username` или `/addoperator {telegram_id}` — назначить оператора
-- `/deleteoperator @username` — снять оператора
-- `/operators` — список всех операторов
+- `/deleteoperator @username` — снять оператора (с гардом на активные заявки)
+- `/operators` — список всех операторов с telegram_id
 - `/admins` — список всех администраторов
 - `/stats` — сводка по статусам заявок
 - `/endauction {order_id}` — досрочно завершить аукцион
-- `/confirmpayment {order_id}` — вручную подтвердить оплату → статус `В работе`
+- `/confirmpayment {order_id}` — вручную подтвердить оплату → статус `in_progress`
+- `/completeorder {order_id}` — принудительно завершить заявку
 - `/commands` — список всех команд
-
-Уведомления:
-- Новый отзыв → inline `Одобрить` / `Отклонить`
-- Нет ставок за 120 мин → уведомление
-- Если ROBOKASSA не настроен → запрос на ручное подтверждение оплаты
 
 ---
 
@@ -327,17 +349,18 @@ SQLAlchemy хранит **Python-имена enum** (не `.value`). В БД: `pe
 ### Бюджет
 `_money(amount)` — целое число без копеек (`1500 ₽`), дробное с копейками (`1500.50 ₽`)
 
-### Комментарии
+### Комментарии клиента
 Хранятся в `order.comment` как `"ISO_TS|текст\n---\nISO_TS|текст"`.
 Парсится через `_parse_comment_ts(part)` → timestamp в МСК + текст.
-Старые записи без TS показываются с `[—]`.
 
 ### Карточки
 | Функция | Для кого | Что показывает |
 |---------|---------|----------------|
-| `format_order_card(order)` | Оператор | Полная: ставки, клиент, история |
-| `format_client_card(order)` | Клиент (активная) | Без ставок и оператора, кол-во файлов |
-| `format_client_history_card(order)` | Клиент (история) | Дата создания + дата выполнения/отмены |
+| `format_order_card(order, is_admin=False)` | Оператор/Админ | Ставки, клиент (full_name или @username), история, заметки |
+| `format_client_card(order)` | Клиент (активная) | Без ставок и имён операторов, кол-во файлов, история |
+| `format_client_history_card(order)` | Клиент (история) | Дата создания + дата выполнения/отмены, итоговая сумма |
+
+`_history_lines(order)` — объединяет `order.comment` и `order.messages`, последние 10 записей по времени.
 
 ---
 
@@ -376,7 +399,11 @@ services:
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
 ```
 
-После любых изменений кода: `docker-compose up -d --build`
+Полный сброс БД (заявки с №1):
+```bash
+docker-compose down -v
+docker-compose up -d --build
+```
 
 ---
 
@@ -386,16 +413,15 @@ services:
 |------|------|
 | `app/main.py` | FastAPI + lifespan: webhook setup, scheduler start, router mounting |
 | `app/bot/dispatcher.py` | Middleware chain + все роутеры (порядок: admin → operator → client) |
-| `app/services/auction_service.py` | Полный жизненный цикл аукциона |
+| `app/services/auction_service.py` | Полный жизненный цикл аукциона + recover_overdue_auctions |
 | `app/bot/middlewares/db_session.py` | Session-per-update: commit/rollback, inject в handlers |
 | `app/bot/middlewares/user_register.py` | Авторегистрация + auto-promote admin |
 | `app/api/payment.py` | Robokassa callback: Form params, verify, `return f"OK{InvId}"` |
 | `app/bot/formatters.py` | Три форматтера карточек + _money() + _history_lines() |
 | `app/bot/routers/operator/menu.py` | group_view_order (IsOperatorGroup + try/except) |
 | `app/bot/routers/client/order_list.py` | client_view action + все card actions клиента |
-| `migrations/versions/0001_initial.py` | Начальная миграция (создана вручную) |
-| `migrations/versions/0002_fix_columns.py` | Переименование колонок |
-| `migrations/versions/0003_add_review_rating.py` | Рейтинг отзывов |
+| `app/bot/routers/operator/notes.py` | FSM загрузки решения: файлы + текстовый комментарий |
+| `app/bot/routers/operator/messaging.py` | Переговоры по цене (negot_*), реквизиты |
 
 ---
 
@@ -407,28 +433,31 @@ services:
 - [x] "Свободные заявки" в группе → список приходит в личку оператора, не в группу
 - [x] "Перейти к заявке" в группе → карточка в личке оператора (или алерт "напишите /start")
 - [x] Кнопки "№{id}" у клиента используют `action="client_view"` — оператор не перехватывает
-- [x] Клиент видит свою карточку без ставок операторов
-- [x] "← Назад" в карточке удаляет её и показывает список
+- [x] Клиент видит `full_name` оператора (без @username); оператор видит `full_name` клиента
+- [x] Администратор видит `@username` клиента в карточке
+- [x] "← Назад" в карточке удаляет её и показывает список (try/except на старых сообщениях)
 - [x] Отмена заявки: подтверждение → "Да" отменяет, "Нет" удаляет подтверждение
 - [x] Оператор вводит ставку → получает обновлённую карточку со ставкой
 - [x] Оператор вводит ставку = бюджет → авто-назначение
 - [x] `/endauction {id}` → досрочное завершение, min bid побеждает (при равных — раньше)
-- [x] Без Robokassa → клиент получает "реквизиты пришлёт админ", админу `/confirmpayment`
+- [x] Без Robokassa → клиент видит "Я оплатил", при нажатии → admin /confirmpayment
 - [x] `/confirmpayment {id}` → статус "В работе", оба уведомлены
-- [x] Robokassa callback → статус "В работе", оба уведомлены
+- [x] Robokassa callback → payment_received_at → admin подтверждает → статус "В работе"
+- [x] Переговоры по цене: клиент "Обсудить цену" → оператор: принять/встречная/отменить
+- [x] Встречная сумма с комментарием ("3700 Причина") — комментарий доходит до клиента
+- [x] При отмене оператором — группа операторов уведомлена
 - [x] Клиент добавляет комментарий/файлы → в группу уведомление + кнопка "Перейти к заявке"
-- [x] Комментарии хранятся с timestamp, показываются в правильное время
-- [x] Несколько комментариев к заявке — все сохраняются
-- [x] Бюджет показывается без копеек (`1500 ₽`)
-- [x] Отзыв: сначала выбор рейтинга (звёзды), потом текст
-- [x] Отзыв → admin DM → одобрение → виден в "Отзывы о нас" со звёздами
-- [x] История заявок: выполненная → 4 кнопки; отменённая → 1 кнопка "← Назад"
-- [x] 120 мин без ставок → клиент уведомлён, статус "Отменено"
-- [x] Прокси: сообщение клиента → у оператора; ответ оператора → у клиента
-- [x] Рестарт контейнера → FSM-состояния сохранены (Redis), таймер аукциона восстановлен
-- [x] Max 5 активных заявок на клиента — при превышении отказ
-- [x] `/operators`, `/admins`, `/stats`, `/commands` — работают
-- [ ] Robokassa в боевом режиме (нужна регистрация в системе)
+- [x] Оператор загружает решение: файлы + текстовый комментарий → /done
+- [x] Клиент видит комментарий к решению в уведомлении и в «История взаимодействия»
+- [x] После просмотра решения — кнопка "← История заявок"
+- [x] "💬 Задать вопрос" работает на выполненных заявках; заблокирован на отменённых
+- [x] FSM загрузки решения: "Написать клиенту" / "Добавить заметку" / "Могу взять" → алерт
+- [x] Отзыв: выбор рейтинга → текст → admin модерация → "Отзывы о нас" без @username
+- [x] После отзыва: клиент получает client_main_kb, оператор/админ — без смены клавиатуры
+- [x] Рестарт контейнера → FSM-состояния сохранены (Redis), аукционный таймер восстановлен
+- [x] Max 5 активных заявок на клиента — при превышении отказ (двойная проверка)
+- [x] `/operators`, `/admins`, `/stats`, `/commands`, `/completeorder` — работают
+- [ ] Robokassa в боевом режиме (нужна регистрация)
 - [ ] End-to-end тест с двумя реальными операторами
 
 ---
@@ -437,20 +466,33 @@ services:
 
 ### Деплой и инфраструктура
 - **python-multipart** — обязателен для FastAPI Form POST (Robokassa callback)
-- **Offline wheels** — пакеты скачиваются через `pip download --platform manylinux_2_17_x86_64 --python-version 311 --only-binary=:all:` из-за VPN
-- **Миграции в репозитории** — при `docker-compose down` файлы внутри контейнера теряются
+- **Offline wheels** — пакеты скачиваются через `pip download` с флагами платформы
+- **Scheduler sync URL** — APScheduler jobstore требует `postgresql://` (не `+asyncpg`)
 
 ### БД и ORM
-- **Enum хранит Python-имена** (`pending`, не `На рассмотрении`) — в миграции указывать английские имена
-- **OPERATOR_GROUP_ID** — без `-100` для обычной группы
+- **Enum хранит Python-имена** (`pending`, не `На рассмотрении`) — в миграции английские имена
+- **OPERATOR_GROUP_ID** — без `-100` для обычной группы (только суперgroup использует `-100`)
 - **file_id vs telegram_file_id** — миграция 0001 создала `file_id`, модели ожидали `telegram_file_id`. Исправлено в 0002
-- **reviews.rating** — в 0001 была колонка `rating` которую удалили в 0002, потом добавили обратно в 0003 (теперь в модели)
-- **`session.expire_all()`** — обязателен перед перезагрузкой объекта после mutation, иначе SQLAlchemy отдаёт кэш
+- **messagedirection enum** — имена `client_to_operator` / `operator_to_client` (не `client_to_op`)
+- **0004 migration enum duplication** — `orderlogaction` нельзя создавать через `SQLAlchemy Enum.create()` + `create_type=False` в asyncpg. Решение: raw `op.execute("CREATE TYPE ... AS ENUM (...)")` + `op.execute("CREATE TABLE ...")`
+- **`session.expire_all()`** — обязателен перед перезагрузкой объекта после mutation
+- **bids upsert** — `INSERT … ON CONFLICT DO UPDATE` (BidRepo.upsert) вместо insert+select
 
 ### Бот и роли
-- **IsClient пропускает все роли** — иначе оператор/админ не может создавать заявки
-- **Авто-промоушн admin** — при каждом апдейте если telegram_id совпадает
-- **operator_id ≠ telegram_id** — в `place_bid` параметр `operator_id` — DB id (FK в bids). Нужен `UserRepo.get_by_id()` для получения telegram_id
-- **action="view" конфликт** — клиентский список использует `action="client_view"`, иначе оператоский хэндлер перехватывает
-- **"Перейти к заявке" не работает** — оператор не написал боту /start в личке. Добавлен try/except с алертом
-- **Session cache** — после `bid_repo.create()` нужен `session.expire_all()` перед reload
+- **IsClient пропускает все роли** — оператор/админ может создавать заявки и использовать клиентский UI
+- **Авто-промоушн admin** — при каждом апдейте если telegram_id совпадает с ADMIN_TELEGRAM_ID
+- **operator_id ≠ telegram_id** — в `place_bid` параметр — DB id. Нужен `UserRepo.get_by_id()` для telegram_id
+- **action="view" конфликт** — клиентский список использует `action="client_view"`, иначе операторский хэндлер перехватывает
+- **"Перейти к заявке" не работает** — оператор не написал /start боту. Добавлен try/except + алерт
+- **UnboundLocalError в solution_done** — дублирующий `from app.db.models.order import OrderStatus` внутри функции делал имя локальным → обращение до import → ошибка. Удалён дублирующий import.
+
+### Исправленные баги (аудит)
+1. **reviews.py** — `got_review_text` возвращал `client_main_kb()` для всех ролей → добавлена проверка `user.role == UserRole.client`
+2. **client/messaging.py** — `start_client_message` не блокировал cancelled-заявки → добавлена проверка `order.status == OrderStatus.cancelled`
+3. **operator/messaging.py** — `extra_comment` терялся в Robokassa-ветке `counter_offer_done` → добавлен `comment_line` в оба варианта сообщения
+4. **operator/messaging.py** — `negot_cancel_order` не уведомлял группу операторов → добавлено `bot.send_message(operator_group_id, ...)`
+5. **client/reviews.py** — `all_reviews` показывал `@username` публично → заменён на `r.client.full_name`
+6. **client/order_list.py** — `back_to_orders_list`, `back_to_history_list`, `cancel_order_no` — `delete()` без try/except → добавлены try/except
+7. **operator/notes.py** — `solution_done` использовал `get_by_id` вместо `get_by_id_for_update` → исправлено
+8. **operator/notes.py**, **operator/messaging.py**, **operator/bid.py** — кнопки карточки во время `SolutionStates.waiting_files` молча сбрасывали FSM → добавлен гард с алертом
+9. **operator/menu.py** — мёртвый обработчик `complete_order` (action="complete") удалён (авто-завершение теперь в `solution_done`)

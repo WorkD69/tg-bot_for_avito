@@ -26,6 +26,15 @@ async def start_operator_message(
     session: AsyncSession,
     user: User,
 ):
+    from app.bot.states.note import SolutionStates
+    current_state = await state.get_state()
+    if current_state == SolutionStates.waiting_files:
+        await callback.answer(
+            "⚠️ Загрузка решения в процессе — сначала завершите /done",
+            show_alert=True,
+        )
+        return
+
     order = await OrderRepo(session).get_by_id(callback_data.order_id)
     if not order or order.operator_id != user.id:
         await callback.answer("❌ Заявка не найдена или не ваша", show_alert=True)
@@ -68,10 +77,18 @@ async def send_operator_message(message: Message, state: FSMContext, session: As
     )
 
     from app.bot.instance import bot
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    reply_btn = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="↩️ Ответить оператору",
+            callback_data=OrderCB(order_id=order_id, action="client_msg").pack(),
+        )
+    ]])
     try:
         await bot.send_message(
             client.telegram_id,  # correct: telegram_id, not DB id
             f"💬 Сообщение от оператора по заявке №{order_id}:\n\n{message.text}",
+            reply_markup=reply_btn,
         )
     except Exception:
         pass
@@ -246,20 +263,25 @@ async def negot_counter(
     await state.set_state(CounterOfferStates.waiting_amount)
     await state.update_data(order_id=order.id)
     await callback.message.edit_reply_markup(reply_markup=None)
-    await callback.message.answer("💰 Введите вашу встречную сумму (число в рублях):")
+    await callback.message.answer(
+        "💰 Введите сумму и при желании пояснение через пробел:\n"
+        "Например: «3700 Минимальная стоимость работы»"
+    )
     await callback.answer()
 
 
 @router.message(CounterOfferStates.waiting_amount, F.text, IsOperator())
 async def counter_offer_done(message: Message, state: FSMContext, session: AsyncSession, user: User):
     from decimal import Decimal, InvalidOperation
+    parts = message.text.strip().split(None, 1)
     try:
-        amount = Decimal(message.text.strip().replace(",", "."))
+        amount = Decimal(parts[0].replace(",", ".").replace("₽", ""))
         if amount <= 0:
             raise ValueError
     except (ValueError, InvalidOperation):
-        await message.answer("❌ Введите положительное число:")
+        await message.answer("❌ Первым словом укажите положительную сумму, например: «3700 Минимальная стоимость»:")
         return
+    extra_comment = parts[1].strip() if len(parts) > 1 else ""
 
     data = await state.get_data()
     order_id: int = data["order_id"]
@@ -297,16 +319,18 @@ async def counter_offer_done(message: Message, state: FSMContext, session: Async
                     invoice_id=order.payment_invoice_id,
                     amount=order.payment_amount,
                 )
+                comment_line = f"\n💬 {extra_comment}" if extra_comment else ""
                 await bot.send_message(
                     client.telegram_id,
-                    f"🔄 Оператор обновил сумму по заявке №{order_id}: {_money(amount)}\n"
+                    f"🔄 Оператор обновил сумму по заявке №{order_id}: {_money(amount)}{comment_line}\n"
                     f"💳 Новая ссылка для оплаты: {link}",
                     reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=False),
                 )
             else:
+                comment_line = f"\n💬 {extra_comment}" if extra_comment else ""
                 await bot.send_message(
                     client.telegram_id,
-                    f"🔄 Оператор предлагает новую сумму по заявке №{order_id}: {_money(amount)}\n"
+                    f"🔄 Оператор предлагает новую сумму по заявке №{order_id}: {_money(amount)}{comment_line}\n"
                     "⏳ Ожидайте обновлённые реквизиты для оплаты",
                     reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=True),
                 )
@@ -348,9 +372,12 @@ async def negot_cancel_order(
     await callback.message.answer(f"✅ Заявка №{order.id} отменена")
     await callback.answer()
 
+    from app.bot.instance import bot
+    from app.bot.keyboards.order_inline import group_new_order_kb
+    from app.config import settings as _settings
+
     client = await UserRepo(session).get_by_id(order.client_id)
     if client:
-        from app.bot.instance import bot
         try:
             await bot.send_message(
                 client.telegram_id,
@@ -358,3 +385,12 @@ async def negot_cancel_order(
             )
         except Exception:
             pass
+
+    try:
+        await bot.send_message(
+            _settings.operator_group_id,
+            f"❌ Заявка №{order.id} отменена оператором",
+            reply_markup=group_new_order_kb(order.id),
+        )
+    except Exception:
+        pass

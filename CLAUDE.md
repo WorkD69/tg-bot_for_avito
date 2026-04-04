@@ -12,6 +12,9 @@ Telegram bot for accepting math/exact science task orders from clients. A **sing
 # Start all services (first run)
 docker-compose up -d --build
 
+# Full reset — wipe DB and restart from scratch (order IDs reset to 1)
+docker-compose down -v && docker-compose up -d --build
+
 # Apply DB migrations on first run / after model changes
 docker-compose exec bot alembic upgrade head
 
@@ -21,11 +24,11 @@ docker-compose exec bot alembic revision --autogenerate -m "description"
 # View logs
 docker-compose logs -f bot
 
-# Run locally without Docker (requires local PostgreSQL + Redis)
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
 # Check Python syntax (use full Python path on Windows)
 "C:\Program Files\Python312\python.exe" -m py_compile app/path/to/file.py
+
+# Restart bot only (after code changes, no DB changes)
+docker-compose restart bot
 ```
 
 ## Architecture
@@ -34,7 +37,6 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 The operator supergroup is **notifications-only**. All operator interactions happen in their **private DM** with the bot:
 - Reply button pressed in group → bot sends response to operator's DM via `bot.send_message(operator.telegram_id, ...)`, does NOT reply in the group
 - "Перейти к заявке" inline button in group → sends full order card to operator's DM
-- This is the only correct way to isolate UX between operators in a Telegram group
 - `IsOperatorGroup()` filter handles group callbacks **before** DM handlers — critical for routing
 
 ### Request Flow: New Order → Auction → Payment
@@ -48,33 +50,53 @@ Client FSM (4 steps: files → comment → deadline → budget)
       → bid == budget → immediate auto-assign
       → bid != budget → wait for 120 min or admin /endauction
   → Operator assigned → PaymentService.generate_link() → client receives Robokassa URL
-      → If ROBOKASSA_LOGIN is empty → admin gets manual /confirmpayment {id} prompt
-  → Robokassa POST /payment/robokassa → order status "В работе" → notify both parties
-  → Admin can also /confirmpayment {id} to manually confirm payment
+      → If ROBOKASSA_LOGIN is empty → operator sends requisites manually, client presses "Я оплатил"
+  → Robokassa POST /payment/robokassa → sets payment_received_at → notifies admin
+  → Admin /confirmpayment {id} → moves to in_progress → notify both parties
+  → Operator uploads solution files + optional text comment → order auto-completes → client notified
 ```
 
 ### Session-per-update Middleware
-`app/bot/middlewares/db_session.py` opens an `AsyncSession` for every Telegram update, commits on success, rolls back on exception. Handlers receive `session: AsyncSession` via aiogram's dependency injection (it's in `data[]`). **Never** share sessions across async boundaries.
+`app/bot/middlewares/db_session.py` opens an `AsyncSession` for every Telegram update, commits on success, rolls back on exception. Handlers receive `session: AsyncSession` via aiogram DI. **Never** share sessions across async boundaries.
+
+### post_commit Pattern
+Handlers receive `post_commit: list` via DI. Append notification coroutines there — they fire **after** the session commits. This guarantees notifications are never sent for rolled-back transactions:
+```python
+post_commit.append(bot.send_message(chat_id, text))
+```
 
 ### APScheduler and Sessions
-`_auto_close_auction` in `auction_service.py` is called by APScheduler — it **must open its own** `AsyncSessionFactory()` context. Never pass a session object to a scheduled job; sessions are not serializable and the job fires in a different async context.
+`_auto_close_auction` in `auction_service.py` is called by APScheduler — it **must open its own** `AsyncSessionFactory()` context. Never pass a session object to a scheduled job. APScheduler jobstore uses a **sync** connection string (`postgresql://...`, not `postgresql+asyncpg://`).
 
 ### Router Priority
-`dispatcher.py` includes routers in this order: `admin_router` → `operator_router` → `client_router`. Most specific role first. Handlers use `IsAdmin`, `IsOperator`, `IsClient`, `IsOperatorGroup` filters to gate access.
+`dispatcher.py` includes routers in this order: `admin_router` → `operator_router` → `client_router`. Most specific role first.
 
-**Critical routing rule**: `action="view"` callback is handled by `IsOperatorGroup()` in `operator/menu.py` (sends card to DM). In `client/order_list.py` the list uses `action="client_view"` — separate action to avoid operator handler intercepting client taps.
+**Critical routing rule**: `action="view"` callback is handled by `IsOperatorGroup()` in `operator/menu.py` (sends card to DM). In `client/order_list.py` the list uses `action="client_view"` — separate action to avoid operator handler intercepting client taps. Never merge these two actions.
 
 ### Robokassa Callback
 The `/payment/robokassa` endpoint receives **Form POST** (not JSON). Response **must** be the exact string `f"OK{InvId}"`. Signature verification: `MD5(f"{OutSum}:{InvId}:{pass2}").upper()`.
 
 ### "Файлы" View (Inline Edit Pattern)
-When operator clicks "Файлы" on an order card in their DM: the bot **edits the same message** (`edit_message_text`) to show the files header + "← Назад" button, then sends the actual files as a reply to that message. "← Назад" edits back to the card. Never send files as a new standalone message.
+When operator clicks "Файлы": bot **edits the same message** (`edit_message_text`) to show files header + "← Назад" button, then sends files as replies. "← Назад" edits back to the card. Never send files as a new standalone message.
 
 ### place_bid — operator_id vs telegram_id
-`place_bid(operator_id)` receives a **DB user id** (foreign key in bids table), NOT telegram_id. Before calling `bot.send_message()` always resolve: `operator_user = await UserRepo(session).get_by_id(operator_id)` and use `operator_user.telegram_id`. These are different numbers.
+`place_bid(operator_id)` receives a **DB user id** (FK in bids table), NOT telegram_id. Always resolve: `operator_user = await UserRepo(session).get_by_id(operator_id)` then use `operator_user.telegram_id`.
 
 ### Session Cache After Mutations
-After creating/updating a bid, call `session.expire_all()` before reloading the order with relations — otherwise SQLAlchemy returns stale cached data and the new bid won't appear in the card.
+After `bid_repo.upsert()`, call `session.expire_all()` before reloading the order with relations — otherwise SQLAlchemy returns stale cached data.
+
+### format_order_card — is_admin flag
+`format_order_card(order, is_admin=False)` — operators see `client.full_name` only; admins see `@username`. Always pass `is_admin=(user.role == UserRole.admin)` when calling from operator handlers.
+
+### FSM Guard Pattern
+Before setting a new FSM state in operator callback handlers, check if `SolutionStates.waiting_files` is active to prevent silently cancelling an in-progress solution upload:
+```python
+current_state = await state.get_state()
+if current_state == SolutionStates.waiting_files:
+    await callback.answer("⚠️ Загрузка решения в процессе — сначала завершите /done", show_alert=True)
+    return
+```
+Applied in: `start_operator_message`, `start_note`, `start_bid`.
 
 ## Key Env Variables
 
@@ -84,137 +106,114 @@ After creating/updating a bid, call `session.expire_all()` before reloading the 
 | `ADMIN_TELEGRAM_ID` | Single admin's Telegram user_id |
 | `ROBOKASSA_IS_TEST` | Set `true` during development |
 | `REDIS_URL` | FSM state storage — required for persistence across restarts |
-| `ROBOKASSA_LOGIN` | If empty — payment flow uses manual /confirmpayment bypass |
-
-APScheduler uses a **sync** PostgreSQL connection string (`postgresql://...`, not `postgresql+asyncpg://`) for its jobstore — separate from the async SQLAlchemy engine.
+| `ROBOKASSA_LOGIN` | If empty — payment flow uses manual requisites + "Я оплатил" button |
 
 ## Order Statuses (Python enum names stored in DB)
 
-SQLAlchemy stores **Python enum names** (not `.value`). DB values: `pending`, `awaiting_payment`, `in_progress`, `completed`, `cancelled`. Display `.value` in UI (Russian strings). Never hardcode Russian status strings in queries — always use `OrderStatus.pending` etc.
+SQLAlchemy stores **Python enum names** (not `.value`). DB values: `pending`, `awaiting_payment`, `in_progress`, `completed`, `cancelled`. Display `.value` in UI (Russian strings).
 
 `pending` → `awaiting_payment` → `in_progress` → `completed` / `cancelled`
+
+Extra state tracked via fields (not new statuses):
+- `payment_received_at` — Robokassa callback or client pressed "Я оплатил"
+- `payment_confirmed_at` — admin ran `/confirmpayment`
+- `solution_uploaded_at` — operator uploaded solution files; **triggers auto-complete**
+- `payment_revision` — incremented on price change, invalidates old Robokassa links
+- `cancelled_by` — `"client"` | `"operator"` | `"system"` | `"admin"`
+
+**Order auto-completes** when operator sends `/done` in solution upload FSM — no manual "Завершить заявку" step needed. The old `action="complete"` handler has been removed.
 
 ## Role System
 
 - `IsClient` filter passes for **all** roles (client, operator, admin) — operators and admins can create orders and use client UI simultaneously
 - `IsOperator` filter passes for operator **and** admin
 - `UserRegisterMiddleware` auto-promotes user to `admin` role if their `telegram_id == settings.admin_telegram_id`
-- This means the admin can test the full client flow without a separate account
 
-## Order Creation Rules
+## Solution Upload FSM
 
-- Files are **optional** — client can send `/done` without any files
-- Deadline is validated against **Moscow time** (UTC+3) — cannot be in the past
-- Error message for invalid/past deadline: `"❌ Некорректный формат даты\nВведите дату в формате ДД.ММ.ГГГГ, не предшествующую текущей"`
-- After budget is entered, client receives: `"🎉 Ваша заявка создана! Ожидайте, пока операторы возьмут её в работу\n\n📋 Статус заявки вы можете посмотреть в разделе «Текущие заявки»"`
-- Max 5 active orders per client (all statuses except completed/cancelled)
-- Comment stored with UTC timestamp: `"{ISO_TS}|{text}"`, multiple comments separated by `"\n---\n"`
+Operator flow: "Отправить решение" → `SolutionStates.waiting_files`
+- Photo/document messages → added to `files[]` in FSM state
+- Text messages (not `/done`) → saved as `comment` in FSM state (last one wins)
+- `/done` → saves `SolutionFile` rows + saves comment as `Message(direction=operator_to_client)` if present → auto-completes order → notifies client with comment
+
+The comment appears in: client's notification message AND in `format_client_history_card` history section (as `🔧 Оператор: {text}`).
 
 ## Client Order Card Rules
 
-- Client sees **different card** than operator — no bids, no operator names: `format_client_card(order)`
-- Active orders: 4 buttons — "Добавить комментарий", "Добавить файлы", "Отменить заявку" (only if pending), "← Назад"
-- "← Назад" deletes the card message and shows the orders list again
-- Cancelling shows confirmation keyboard; "← Нет, назад" deletes the confirmation message
-- History (completed/cancelled): `format_client_history_card(order)` — shows created + updated dates
-- Completed: buttons "📂 Решение", "💬 Задать вопрос", "⭐ Оставить отзыв", "← Назад"
-- Cancelled: only "← Назад" button
+- Client sees `format_client_card(order)` — no bids, no operator names
+- `"← Назад"` buttons use `try/except` around `message.delete()` — messages older than 48h cannot be deleted
+- `"💬 Задать вопрос"` (action=`client_msg`) — allowed on `completed` orders, blocked only on `cancelled`
+- `"↩️ Ответить оператору"` button appears in operator-to-client messages; blocked if order is `cancelled`
+- After viewing solution files, a `"← История заявок"` button is sent as a final navigation message
 
 ## Client Notifications to Operator Group
 
-When client modifies an active order, operator group receives notification + "Перейти к заявке" inline button:
-- Added comment: `"✏️ К заявке №{id} добавлен комментарий клиентом"`
-- Added files: `"📎 К заявке №{id} добавлены файлы клиентом"`
-- Cancelled: `"❌ Заявка №{id} отменена клиентом"`
+All events send the group a notification + "Перейти к заявке" inline button:
+- New order, client added comment, client added files, client cancelled, operator cancelled
 
 ## Review Flow
 
-1. Client taps "⭐ Оставить отзыв" → bot shows star rating keyboard (1–5 stars, `RatingCB`)
-2. Client picks rating → bot asks for text
-3. Text submitted → admin DM receives review + Одобрить/Отклонить keyboard
-4. Rating stored in `reviews.rating` column (migration 0003)
+1. "⭐ Оставить отзыв" → `rating_kb` (1–5 stars, `RatingCB`) → text input
+2. Saved with `status=pending`; admin DM receives + Одобрить/Отклонить keyboard
+3. After submitting: `client_main_kb()` sent only if `user.role == UserRole.client` — operators/admins testing as client do not get their keyboard replaced
+4. "Отзывы о нас" shows `client.full_name` (never `@username`) for approved reviews
+
+## Price Negotiation (awaiting_payment)
+
+Client: "Обсудить цену" → `NegotiationStates.waiting_text` → message sent to operator with `negot_operator_kb`
+
+Operator options:
+- **Accept** (`negot_accept`) — applies `proposed_amount` from `NegotCB`, increments `payment_revision`
+- **Counter** (`negot_counter` → `CounterOfferStates.waiting_amount`) — format: `"3700"` or `"3700 Comment text"`. Updates `payment_amount`, increments `payment_revision`. Comment delivered to client in both Robokassa and manual modes.
+- **Cancel** (`negot_cancel_order`) — cancels order, notifies client AND operator group
 
 ## Budget Display
 
-Always show budget as integer when no fractional part: `1500 ₽` not `1500.00 ₽`. Use `_money()` helper in `formatters.py`.
+Always use `_money()` helper from `formatters.py`: `1500 ₽` not `1500.00 ₽`.
 
 ## Message Style Rules
 
-All bot messages must follow these rules:
-- **No trailing period** on the last sentence of any message
-- **Relevant emoji** at the start of each message or sentence
-- Example one-liner: `"✅ Ставка принята"`
-- Example multi-line: `"❌ Некорректный формат даты\nВведите дату в формате ДД.ММ.ГГГГ, не предшествующую текущей"`
+- **No trailing period** on the last sentence
+- **Relevant emoji** at the start of each message/sentence
 
 ## Migrations
 
 | File | Contents |
 |------|----------|
-| `0001_initial.py` | All tables. Enum `messagedirection` uses values `client_to_operator`/`operator_to_client`. |
-| `0002_fix_columns.py` | Renames `file_id` → `telegram_file_id` in order_files/solution_files |
-| `0003_add_review_rating.py` | Adds `rating INTEGER NOT NULL DEFAULT 5` to reviews |
-| `0004_refactor.py` | Adds `order_logs` table; replaces `reviews.is_approved` with `reviews.status` (ReviewStatus enum); adds `reviews.moderated_by/at`; unique constraint on `(order_id,client_id)` in reviews and `(order_id,operator_id)` in bids (with dedup before constraints); adds `solution_files.file_type`; adds `orders.payment_received_at`, `payment_confirmed_at`, `solution_uploaded_at`, `payment_revision`, `cancelled_by` |
-| `0005_schema_fixes.py` | Aligns `bids.amount` precision to `Numeric(12,2)`; makes `messages.text` NOT NULL |
+| `0001_initial.py` | All tables. `messagedirection` enum: `client_to_operator`/`operator_to_client` |
+| `0002_fix_columns.py` | `file_id` → `telegram_file_id` in order_files/solution_files |
+| `0003_add_review_rating.py` | `rating INTEGER NOT NULL DEFAULT 5` in reviews |
+| `0004_refactor.py` | `order_logs` table; `reviews.status` enum (replaces `is_approved`); `reviews.moderated_by/at`; unique on `(order_id,client_id)` reviews and `(order_id,operator_id)` bids; `solution_files.file_type`; order lifecycle fields (`payment_received_at`, `payment_confirmed_at`, `solution_uploaded_at`, `payment_revision`, `cancelled_by`) |
+| `0005_schema_fixes.py` | `bids.amount` precision `Numeric(12,2)`; `messages.text NOT NULL` |
 
-**messagedirection enum members**: Python `MessageDirection.client_to_operator` and `MessageDirection.operator_to_client` — `.name` matches DB enum labels from 0001. Do NOT use old aliases `client_to_op`/`op_to_client`.
+**0004 migration pitfall**: `orderlogaction` enum must be created via raw `op.execute("CREATE TYPE orderlogaction AS ENUM (...)")` — SQLAlchemy's `Enum.create()` + `create_type=False` does not work reliably with asyncpg dialect.
 
-**Do not delete migration files** — they are the source of truth for DB schema. Always create a new revision on top, never modify existing ones.
+**messagedirection enum**: Use `MessageDirection.client_to_operator` and `MessageDirection.operator_to_client`. Old aliases `client_to_op`/`op_to_client` do not exist.
 
-## Payment Flow (Critical)
-
-1. Robokassa callback (`POST /payment/robokassa`) → validates signature + amount → sets `order.payment_received_at` → stays in `awaiting_payment` → notifies admin
-2. Admin `/confirmpayment {id}` → sets `payment_confirmed_at` + moves to `in_progress` → notifies client+operator
-3. No auto-transition to `in_progress` from callback. Always requires admin confirmation.
-4. Auto-confirm mode is architecturally prepared but **not active by default**.
-
-## Price Negotiation (awaiting_payment)
-
-Client: "Обсудить цену" → FSM `NegotiationStates.waiting_text` → message sent to operator with `negot_operator_kb`
-Operator options: Accept (sends requisites_kb) / Counter (FSM `CounterOfferStates.waiting_amount` → updates `order.payment_amount`, increments `payment_revision`) / Cancel order
-When price changes: `payment_revision` incremented — old Robokassa links invalidated.
-
-## Order Lifecycle (5 statuses only)
-
-Extra state tracked via fields (not new statuses):
-- `payment_received_at` — callback or "Я оплатил" pressed
-- `payment_confirmed_at` — admin confirmed payment
-- `solution_uploaded_at` — operator uploaded files (does NOT auto-complete order)
-- `payment_revision` — incremented on price change
-- `cancelled_by` — "client" | "admin" | "system" | "operator"
-
-Operator completes order manually via "✅ Завершить заявку" button (requires `solution_uploaded_at != null`).
-Admin can force-complete via `/completeorder {id}`.
+**Never modify existing migration files** — always create a new revision on top.
 
 ## Server-Side Guards
 
-- Bid: cannot bid on own order (client_id == operator_id)
-- Messaging: cannot message yourself (client_id == operator_id)
-- Review moderation: cannot moderate own review (client_id == actor_id)
-- /deleteoperator: blocked if operator has active assigned orders
-- All critical actions use `get_by_id_for_update()` (SELECT FOR UPDATE)
+- Bid: cannot bid on own order (`client_id == operator_id`)
+- Messaging: cannot message yourself; client messaging blocked if order is `cancelled`
+- `/deleteoperator`: blocked if operator has active assigned orders
+- All state-changing actions use `get_by_id_for_update()` (SELECT FOR UPDATE)
 - Auction close is idempotent: checks `status == pending` under lock
 
 ## Admin Commands (private DM only)
 
-- `/addoperator @username` or `/addoperator {telegram_id}` — sets `user.role = operator`
-- `/deleteoperator @username` — reverts `user.role` back to `client`
-- `/operators` — list all operators with telegram_id
-- `/admins` — list all admins with telegram_id
-- `/endauction {order_id}` — forces auction close, assigns lowest bidder (ties broken by earliest bid)
-- `/confirmpayment {order_id}` — manually confirm payment, moves order to `in_progress`
-- `/stats` — order counts by status
-- `/completeorder {order_id}` — force-complete in_progress order
-- `/commands` — shows all available admin commands
+`/addoperator`, `/deleteoperator`, `/operators`, `/admins`, `/endauction {id}`, `/confirmpayment {id}`, `/stats`, `/completeorder {id}`, `/commands`
 
 ## Auction Tie-Breaking
 
-`BidRepo.get_min_bid()` orders by `(amount ASC, created_at ASC)` — if two operators bid same amount, earliest bid wins.
+`BidRepo.get_min_bid()` orders by `(amount ASC, created_at ASC)` — lowest amount wins; earliest bid breaks ties.
 
 ## Known Solved Issues
 
-- **`column solution_files.telegram_file_id does not exist`** — migration 0001 used `file_id`, models expected `telegram_file_id`. Fixed by migration 0002.
-- **Operator "Перейти к заявке" did nothing** — operator must write `/start` to bot in DM first; otherwise Telegram blocks bot from initiating chat. Handler now catches exception and shows alert.
-- **Client list buttons intercepted by operator handler** — client order list uses `action="client_view"`, operator uses `action="view"`. Never merge these.
-- **`place_bid` sent to wrong ID** — was passing DB user.id to `bot.send_message` instead of `telegram_id`.
-- **First bid not showing** — SQLAlchemy session cache not invalidated. Fixed with `session.expire_all()` before reload.
-- **OPERATOR_GROUP_ID format** — regular groups use `-XXXXXXX` (no `-100` prefix). Only supergroups use `-100XXXXXXX`.
+- **`column solution_files.telegram_file_id does not exist`** — migration 0001 used `file_id`. Fixed by 0002.
+- **Operator "Перейти к заявке" did nothing** — operator must write `/start` to bot in DM first. Handler catches exception and shows alert.
+- **Client list buttons intercepted by operator handler** — client list uses `action="client_view"`, operator uses `action="view"`. Never merge.
+- **`place_bid` sent to wrong ID** — was passing DB `user.id` to `bot.send_message` instead of `telegram_id`.
+- **First bid not showing** — SQLAlchemy session cache. Fixed with `session.expire_all()` before reload.
+- **OPERATOR_GROUP_ID format** — regular groups: `-XXXXXXX` (no `-100` prefix). Only supergroups use `-100XXXXXXX`.
+- **UnboundLocalError in solution_done** — duplicate `from app.db.models.order import OrderStatus` inside function body made Python treat it as local, causing NameError before the import line. Remove any in-function duplicate imports.

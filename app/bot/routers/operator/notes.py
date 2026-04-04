@@ -13,6 +13,8 @@ from app.db.models.order import OrderStatus
 from app.db.models.order_log import OrderLogAction
 from app.db.models.solution_file import SolutionFile
 from app.db.models.user import User
+from app.db.models.message import MessageDirection
+from app.repositories.message_repo import MessageRepo
 from app.repositories.order_repo import OrderRepo
 
 router = Router()
@@ -28,6 +30,14 @@ async def start_note(
     session: AsyncSession,
     user: User,
 ):
+    current_state = await state.get_state()
+    if current_state == SolutionStates.waiting_files:
+        await callback.answer(
+            "⚠️ Загрузка решения в процессе — сначала завершите /done",
+            show_alert=True,
+        )
+        return
+
     order = await OrderRepo(session).get_by_id(callback_data.order_id)
     if not order or order.operator_id != user.id:
         await callback.answer("❌ Заявка не найдена или не ваша", show_alert=True)
@@ -74,9 +84,11 @@ async def start_solution(
         return
 
     await state.set_state(SolutionStates.waiting_files)
-    await state.update_data(order_id=order.id, files=[])
+    await state.update_data(order_id=order.id, files=[], comment="")
     await callback.message.answer(
-        "📎 Отправьте файлы с решением — когда закончите, отправьте /done"
+        "📎 Отправьте файлы с решением\n"
+        "💬 Можете также отправить текстовый комментарий к решению\n"
+        "Когда закончите — отправьте /done"
     )
     await callback.answer()
 
@@ -103,6 +115,7 @@ async def _add_solution_file(message: Message, state: FSMContext, file_id: str, 
 async def solution_done(message: Message, state: FSMContext, session: AsyncSession, user: User):
     data = await state.get_data()
     files: list = data.get("files", [])
+    comment: str = data.get("comment", "").strip()
     if not files:
         await message.answer("❌ Нужен хотя бы один файл")
         return
@@ -110,7 +123,7 @@ async def solution_done(message: Message, state: FSMContext, session: AsyncSessi
     order_id: int = data["order_id"]
     await state.clear()
 
-    order = await OrderRepo(session).get_by_id(order_id)
+    order = await OrderRepo(session).get_by_id_for_update(order_id)
     if not order or order.operator_id != user.id:
         await message.answer("❌ Заявка не найдена или не ваша")
         return
@@ -125,28 +138,53 @@ async def solution_done(message: Message, state: FSMContext, session: AsyncSessi
             file_type=f["file_type"],
         ))
 
-    # Mark solution uploaded — do NOT auto-complete the order
+    # Mark solution uploaded and auto-complete the order
     order.solution_uploaded_at = datetime.now(timezone.utc)
     await session.flush()
 
-    await OrderRepo(session).add_log(
+    order_repo = OrderRepo(session)
+    await order_repo.add_log(
         order_id=order_id,
         actor_id=user.id,
         action=OrderLogAction.solution_uploaded,
         detail=f"{len(files)} file(s)",
     )
+    await order_repo.update_status(order, OrderStatus.completed)
+    await order_repo.add_log(
+        order_id=order_id,
+        actor_id=user.id,
+        action=OrderLogAction.completed,
+        detail="auto-completed after solution upload",
+    )
+
+    # Save operator's comment as a message so it appears in client's history card
+    if comment:
+        await MessageRepo(session).create(
+            order_id=order_id,
+            sender_id=user.id,
+            text=comment,
+            direction=MessageDirection.operator_to_client,
+        )
 
     from app.bot.instance import bot
     from app.repositories.user_repo import UserRepo
     client = await UserRepo(session).get_by_id(order.client_id)
     if client:
+        comment_line = f"\n\n💬 Комментарий оператора:\n{comment}" if comment else ""
         try:
             await bot.send_message(
                 client.telegram_id,
-                f"✅ Оператор загрузил файлы решения по заявке №{order_id}\n"
-                "Ожидайте подтверждения завершения",
+                f"🎉 Заявка №{order_id} выполнена!{comment_line}\n\n"
+                "📂 Посмотрите в разделе «История заявок»",
             )
         except Exception:
             pass
 
-    await message.answer(f"✅ Решение по заявке №{order_id} отправлено клиенту")
+    await message.answer(f"✅ Решение по заявке №{order_id} отправлено клиенту — заявка завершена")
+
+
+@router.message(SolutionStates.waiting_files, F.text, IsOperator())
+async def solution_comment(message: Message, state: FSMContext):
+    """Operator can send a text comment alongside solution files."""
+    await state.update_data(comment=message.text.strip())
+    await message.answer("✅ Комментарий сохранён — отправьте файлы или /done")

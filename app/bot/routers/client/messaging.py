@@ -28,6 +28,9 @@ async def start_client_message(
     if not order or order.client_id != user.id:
         await callback.answer("❌ Заявка не найдена", show_alert=True)
         return
+    if order.status == OrderStatus.cancelled:
+        await callback.answer("⚠️ Заявка отменена — переписка недоступна", show_alert=True)
+        return
     if order.operator_id is None:
         await callback.answer("⏳ Оператор ещё не назначен", show_alert=True)
         return
@@ -72,7 +75,7 @@ async def send_client_message(message: Message, state: FSMContext, session: Asyn
     )
 
     from app.bot.instance import bot
-    client_name = f"@{user.username}" if user.username else user.full_name
+    client_name = user.full_name
     try:
         await bot.send_message(
             operator.telegram_id,  # correct: telegram_id, not DB id
