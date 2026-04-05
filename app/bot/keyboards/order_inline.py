@@ -30,7 +30,13 @@ def free_order_card_kb(order_id: int) -> InlineKeyboardMarkup:
                     text="Файлы",
                     callback_data=OrderCB(order_id=order_id, action="files").pack(),
                 ),
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔄 Обновить",
+                    callback_data=OrderCB(order_id=order_id, action="refresh").pack(),
+                ),
+            ],
         ]
     )
 
@@ -59,6 +65,12 @@ def my_order_card_kb(order_id: int) -> InlineKeyboardMarkup:
                     callback_data=OrderCB(order_id=order_id, action="solution").pack(),
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    text="🔄 Обновить",
+                    callback_data=OrderCB(order_id=order_id, action="refresh").pack(),
+                ),
+            ],
         ]
     )
 
@@ -83,6 +95,26 @@ def awaiting_payment_operator_kb(order_id: int) -> InlineKeyboardMarkup:
                     callback_data=OrderCB(order_id=order_id, action="msg").pack(),
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    text="🔄 Обновить",
+                    callback_data=OrderCB(order_id=order_id, action="refresh").pack(),
+                ),
+            ],
+        ]
+    )
+
+
+def operator_refresh_only_kb(order_id: int) -> InlineKeyboardMarkup:
+    """Operator DM — completed/cancelled card: only refresh button."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔄 Обновить",
+                    callback_data=OrderCB(order_id=order_id, action="refresh").pack(),
+                ),
+            ]
         ]
     )
 
@@ -123,6 +155,12 @@ def client_awaiting_payment_kb(order_id: int, show_paid_btn: bool = True) -> Inl
         InlineKeyboardButton(
             text="❌ Отменить заявку",
             callback_data=OrderCB(order_id=order_id, action="cancel").pack(),
+        ),
+    ])
+    rows.append([
+        InlineKeyboardButton(
+            text="🔄 Обновить",
+            callback_data=OrderCB(order_id=order_id, action="client_refresh").pack(),
         ),
     ])
     rows.append([
@@ -201,6 +239,12 @@ def client_completed_order_kb(order_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="🔄 Обновить",
+                    callback_data=OrderCB(order_id=order_id, action="client_refresh").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text="← Назад",
                     callback_data=OrderCB(order_id=order_id, action="back_history").pack(),
                 ),
@@ -215,10 +259,16 @@ def client_cancelled_order_kb(order_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
+                    text="🔄 Обновить",
+                    callback_data=OrderCB(order_id=order_id, action="client_refresh").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text="← Назад",
                     callback_data=OrderCB(order_id=order_id, action="back_history").pack(),
                 ),
-            ]
+            ],
         ]
     )
 
@@ -251,6 +301,12 @@ def client_active_order_kb(order_id: int, can_cancel: bool) -> InlineKeyboardMar
                 callback_data=OrderCB(order_id=order_id, action="cancel").pack(),
             ),
         ])
+    rows.append([
+        InlineKeyboardButton(
+            text="🔄 Обновить",
+            callback_data=OrderCB(order_id=order_id, action="client_refresh").pack(),
+        ),
+    ])
     rows.append([
         InlineKeyboardButton(
             text="← Назад",

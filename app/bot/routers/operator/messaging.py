@@ -1,9 +1,13 @@
+import logging
+
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.filters import IsOperator
+
+logger = logging.getLogger(__name__)
 from app.bot.keyboards.callbacks import NegotCB, OrderCB
 from app.bot.states.note import CounterOfferStates, MessagingStates, RequisitesStates
 from app.db.models.message import MessageDirection
@@ -91,7 +95,7 @@ async def send_operator_message(message: Message, state: FSMContext, session: As
             reply_markup=reply_btn,
         )
     except Exception:
-        pass
+        logger.warning("Не удалось отправить сообщение клиенту по заявке №%d", order_id, exc_info=True)
 
     await message.answer("✅ Сообщение отправлено клиенту")
 
@@ -156,7 +160,7 @@ async def send_requisites_done(message: Message, state: FSMContext, session: Asy
             reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=True),
         )
     except Exception:
-        pass
+        logger.warning("Не удалось отправить реквизиты клиенту по заявке №%d", order_id, exc_info=True)
 
     await message.answer("✅ Реквизиты отправлены клиенту")
 
@@ -232,7 +236,7 @@ async def negot_accept(
                     reply_markup=client_awaiting_payment_kb(order.id, show_paid_btn=True),
                 )
         except Exception:
-            pass
+            logger.warning("Не удалось уведомить клиента о принятии предложения (заявка №%d)", order.id, exc_info=True)
 
     from app.bot.keyboards.order_inline import send_requisites_kb
     price_confirm = f" по новой цене {new_amount_str}" if new_amount_str else ""
@@ -335,7 +339,7 @@ async def counter_offer_done(message: Message, state: FSMContext, session: Async
                     reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=True),
                 )
         except Exception:
-            pass
+            logger.warning("Не удалось уведомить клиента о встречном предложении (заявка №%d)", order_id, exc_info=True)
 
     await message.answer(
         f"✅ Встречное предложение {_money(amount)} по заявке №{order_id} отправлено клиенту\n"
@@ -384,7 +388,7 @@ async def negot_cancel_order(
                 f"❌ К сожалению, заявка №{order.id} отменена оператором",
             )
         except Exception:
-            pass
+            logger.warning("Не удалось уведомить клиента об отмене заявки №%d", order.id, exc_info=True)
 
     try:
         await bot.send_message(
@@ -393,4 +397,4 @@ async def negot_cancel_order(
             reply_markup=group_new_order_kb(order.id),
         )
     except Exception:
-        pass
+        logger.warning("Не удалось уведомить группу об отмене заявки №%d", order.id, exc_info=True)

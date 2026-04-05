@@ -11,6 +11,7 @@ from app.bot.keyboards.order_inline import (
     files_view_kb,
     free_order_card_kb,
     my_order_card_kb,
+    operator_refresh_only_kb,
     orders_list_kb,
 )
 from app.db.models.order import OrderStatus
@@ -24,7 +25,7 @@ def _pick_kb(order, viewer_id: int):
     """Pick the right keyboard based on order state and who's viewing."""
     final = (OrderStatus.completed, OrderStatus.cancelled)
     if order.status in final:
-        return None
+        return operator_refresh_only_kb(order.id)
     if order.operator_id is None:
         return free_order_card_kb(order.id)
     if order.operator_id == viewer_id:
@@ -160,3 +161,28 @@ async def back_to_card(
 
     await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
+
+
+# ── "🔄 Обновить" — refresh card in-place ────────────────────────────────────
+
+@router.callback_query(OrderCB.filter(F.action == "refresh"), IsOperator())
+async def refresh_order_card(
+    callback: CallbackQuery,
+    callback_data: OrderCB,
+    session: AsyncSession,
+    user: User,
+):
+    order = await OrderRepo(session).get_by_id(callback_data.order_id, load_relations=True)
+    if not order:
+        await callback.answer("❌ Заявка не найдена", show_alert=True)
+        return
+
+    from app.db.models.user import UserRole
+    text = format_order_card(order, is_admin=(user.role == UserRole.admin))
+    kb = _pick_kb(order, user.id)
+
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+        await callback.answer("✅ Обновлено")
+    except Exception:
+        await callback.answer("✅ Уже актуально")

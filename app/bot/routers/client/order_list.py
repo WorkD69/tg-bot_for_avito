@@ -77,6 +77,39 @@ async def view_order_client(
     await callback.answer()
 
 
+@router.callback_query(OrderCB.filter(F.action == "client_refresh"), IsClient())
+async def refresh_order_client(
+    callback: CallbackQuery,
+    callback_data: OrderCB,
+    session: AsyncSession,
+    user: User,
+):
+    order = await OrderRepo(session).get_by_id(callback_data.order_id, load_relations=True)
+    if not order or order.client_id != user.id:
+        await callback.answer("❌ Заявка не найдена", show_alert=True)
+        return
+
+    if order.status == OrderStatus.completed:
+        text = format_client_history_card(order)
+        kb = client_completed_order_kb(order.id)
+    elif order.status == OrderStatus.cancelled:
+        text = format_client_history_card(order)
+        kb = client_cancelled_order_kb(order.id)
+    elif order.status == OrderStatus.awaiting_payment:
+        text = format_client_card(order)
+        kb = client_awaiting_payment_kb(order.id, show_paid_btn=not bool(settings.robokassa_login))
+    else:
+        text = format_client_card(order)
+        can_cancel = order.status == OrderStatus.pending
+        kb = client_active_order_kb(order.id, can_cancel=can_cancel)
+
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+        await callback.answer("✅ Обновлено")
+    except Exception:
+        await callback.answer("✅ Уже актуально")
+
+
 @router.callback_query(OrderCB.filter(F.action == "back_list"), IsClient())
 async def back_to_orders_list(
     callback: CallbackQuery,

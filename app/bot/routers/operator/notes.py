@@ -1,6 +1,9 @@
+import logging
 from datetime import datetime, timezone
 
 from aiogram import F, Router
+
+logger = logging.getLogger(__name__)
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -178,7 +181,7 @@ async def solution_done(message: Message, state: FSMContext, session: AsyncSessi
                 "📂 Посмотрите в разделе «История заявок»",
             )
         except Exception:
-            pass
+            logger.warning("Не удалось уведомить клиента о завершении заявки №%d", order_id, exc_info=True)
 
     await message.answer(f"✅ Решение по заявке №{order_id} отправлено клиенту — заявка завершена")
 

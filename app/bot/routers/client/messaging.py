@@ -1,4 +1,8 @@
+import logging
+
 from aiogram import F, Router
+
+logger = logging.getLogger(__name__)
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -82,6 +86,6 @@ async def send_client_message(message: Message, state: FSMContext, session: Asyn
             f"💬 Сообщение от клиента {client_name} по заявке №{order_id}:\n\n{message.text}",
         )
     except Exception:
-        pass
+        logger.warning("Не удалось отправить сообщение оператору по заявке №%d", order_id, exc_info=True)
 
     await message.answer("✅ Сообщение отправлено оператору")

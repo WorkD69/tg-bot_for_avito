@@ -9,8 +9,11 @@ Telegram bot for accepting math/exact science task orders from clients. A **sing
 ## Commands
 
 ```bash
-# Start all services (first run)
+# Start all services (first run or after code changes)
 docker-compose up -d --build
+
+# Rebuild and restart only the bot (after code changes, keeps DB intact)
+docker-compose up -d --build bot
 
 # Full reset — wipe DB and restart from scratch (order IDs reset to 1)
 docker-compose down -v && docker-compose up -d --build
@@ -23,12 +26,13 @@ docker-compose exec bot alembic revision --autogenerate -m "description"
 
 # View logs
 docker-compose logs -f bot
+docker-compose logs -f backup
 
 # Check Python syntax (use full Python path on Windows)
 "C:\Program Files\Python312\python.exe" -m py_compile app/path/to/file.py
 
-# Restart bot only (after code changes, no DB changes)
-docker-compose restart bot
+# IMPORTANT: docker-compose restart bot does NOT pick up code changes —
+# it only restarts the container with the old image. Always use --build.
 ```
 
 ## Architecture
@@ -69,7 +73,7 @@ post_commit.append(bot.send_message(chat_id, text))
 `_auto_close_auction` in `auction_service.py` is called by APScheduler — it **must open its own** `AsyncSessionFactory()` context. Never pass a session object to a scheduled job. APScheduler jobstore uses a **sync** connection string (`postgresql://...`, not `postgresql+asyncpg://`).
 
 ### Router Priority
-`dispatcher.py` includes routers in this order: `admin_router` → `operator_router` → `client_router`. Most specific role first.
+`dispatcher.py` includes routers in this order: `errors_router` → `admin_router` → `operator_router` → `client_router`. Error handler must be first; domain routers go most-specific role first.
 
 **Critical routing rule**: `action="view"` callback is handled by `IsOperatorGroup()` in `operator/menu.py` (sends card to DM). In `client/order_list.py` the list uses `action="client_view"` — separate action to avoid operator handler intercepting client taps. Never merge these two actions.
 
@@ -78,6 +82,13 @@ The `/payment/robokassa` endpoint receives **Form POST** (not JSON). Response **
 
 ### "Файлы" View (Inline Edit Pattern)
 When operator clicks "Файлы": bot **edits the same message** (`edit_message_text`) to show files header + "← Назад" button, then sends files as replies. "← Назад" edits back to the card. Never send files as a new standalone message.
+
+### 🔄 Обновить Button (Refresh Pattern)
+All order cards have a "🔄 Обновить" button that refreshes the card **in-place** via `edit_message_text`. Two separate actions exist to avoid router conflicts:
+- `action="refresh"` — operator cards, handled in `operator/menu.py`
+- `action="client_refresh"` — client cards, handled in `client/order_list.py`
+
+Both wrap `edit_message_text` in try/except — on `MessageNotModified` → `callback.answer("✅ Уже актуально")`. Operator completed/cancelled cards previously had no keyboard; now use `operator_refresh_only_kb()`.
 
 ### place_bid — operator_id vs telegram_id
 `place_bid(operator_id)` receives a **DB user id** (FK in bids table), NOT telegram_id. Always resolve: `operator_user = await UserRepo(session).get_by_id(operator_id)` then use `operator_user.telegram_id`.
@@ -98,15 +109,26 @@ if current_state == SolutionStates.waiting_files:
 ```
 Applied in: `start_operator_message`, `start_note`, `start_bid`.
 
+### Error Monitoring (no external services)
+Two-layer error reporting to admin's Telegram DM:
+1. **`app/bot/routers/errors.py`** — aiogram `@router.errors()` catches any unhandled exception in a handler → formats traceback → sends to `settings.admin_telegram_id`
+2. **`app/utils/telegram_log_handler.py`** — `logging.Handler` at level ERROR: catches `logger.error()` / `logger.exception()` calls → sends via `loop.create_task` (non-blocking). Registered in `main.py` lifespan startup.
+
+For intentionally-swallowed exceptions (`message.delete()` 48h limit, `edit_message_text` MessageNotModified): keep as `except Exception: pass`. For failed `bot.send_message()` notifications: use `logger.warning("...", exc_info=True)`.
+
+### Backup Service
+`backup/` is a separate Docker service (`python:3.11-slim` + `postgresql-client`). Runs an infinite loop, wakes at 03:00 UTC daily: `pg_dump` → gzip → `sendDocument` to `BACKUP_CHAT_ID` Telegram group. Keeps 30 days locally. The bot must be a member of that group.
+
 ## Key Env Variables
 
 | Variable | Purpose |
 |----------|---------|
 | `OPERATOR_GROUP_ID` | Negative chat_id of the operator group (regular group: `-XXXXXXX`, NOT `-100XXXXXXX`) |
-| `ADMIN_TELEGRAM_ID` | Single admin's Telegram user_id |
+| `ADMIN_TELEGRAM_ID` | Single admin's Telegram user_id — auto-promotes on every update |
 | `ROBOKASSA_IS_TEST` | Set `true` during development |
 | `REDIS_URL` | FSM state storage — required for persistence across restarts |
 | `ROBOKASSA_LOGIN` | If empty — payment flow uses manual requisites + "Я оплатил" button |
+| `BACKUP_CHAT_ID` | Telegram group id for daily DB backups — bot must be a member |
 
 ## Order Statuses (Python enum names stored in DB)
 
@@ -121,7 +143,7 @@ Extra state tracked via fields (not new statuses):
 - `payment_revision` — incremented on price change, invalidates old Robokassa links
 - `cancelled_by` — `"client"` | `"operator"` | `"system"` | `"admin"`
 
-**Order auto-completes** when operator sends `/done` in solution upload FSM — no manual "Завершить заявку" step needed. The old `action="complete"` handler has been removed.
+**Order auto-completes** when operator sends `/done` in solution upload FSM — no manual step needed. The old `action="complete"` handler has been removed.
 
 ## Role System
 
@@ -197,12 +219,13 @@ Always use `_money()` helper from `formatters.py`: `1500 ₽` not `1500.00 ₽`.
 - Bid: cannot bid on own order (`client_id == operator_id`)
 - Messaging: cannot message yourself; client messaging blocked if order is `cancelled`
 - `/deleteoperator`: blocked if operator has active assigned orders
+- `/removeadmin`: blocked for `ADMIN_TELEGRAM_ID` (main admin) and for self
 - All state-changing actions use `get_by_id_for_update()` (SELECT FOR UPDATE)
 - Auction close is idempotent: checks `status == pending` under lock
 
 ## Admin Commands (private DM only)
 
-`/addoperator`, `/deleteoperator`, `/operators`, `/admins`, `/endauction {id}`, `/confirmpayment {id}`, `/stats`, `/completeorder {id}`, `/commands`
+`/addoperator`, `/deleteoperator`, `/addadmin`, `/removeadmin`, `/operators`, `/admins`, `/endauction {id}`, `/confirmpayment {id}`, `/stats`, `/completeorder {id}`, `/commands`
 
 ## Auction Tie-Breaking
 
@@ -217,3 +240,4 @@ Always use `_money()` helper from `formatters.py`: `1500 ₽` not `1500.00 ₽`.
 - **First bid not showing** — SQLAlchemy session cache. Fixed with `session.expire_all()` before reload.
 - **OPERATOR_GROUP_ID format** — regular groups: `-XXXXXXX` (no `-100` prefix). Only supergroups use `-100XXXXXXX`.
 - **UnboundLocalError in solution_done** — duplicate `from app.db.models.order import OrderStatus` inside function body made Python treat it as local, causing NameError before the import line. Remove any in-function duplicate imports.
+- **`docker-compose restart bot` doesn't apply code changes** — restarts container with old image. Use `docker-compose up -d --build bot` instead.

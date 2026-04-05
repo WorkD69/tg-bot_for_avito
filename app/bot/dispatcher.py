@@ -14,6 +14,10 @@ def create_dispatcher() -> Dispatcher:
     dp.update.middleware(DbSessionMiddleware())
     dp.update.middleware(UserRegisterMiddleware())
 
+    # Error handler — must be included before domain routers
+    from app.bot.routers.errors import router as errors_router
+    dp.include_router(errors_router)
+
     # Routers: admin → operator → client (most specific role first)
     from app.bot.routers.admin import router as admin_router
     from app.bot.routers.operator import router as operator_router

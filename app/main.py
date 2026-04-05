@@ -12,6 +12,12 @@ dp = create_dispatcher()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ──────────────────────────────────────────────────────────────
+    # Route ERROR+ log records to admin's Telegram DM
+    import logging
+    from app.utils.telegram_log_handler import TelegramErrorHandler
+    tg_handler = TelegramErrorHandler(settings.bot_token, settings.admin_telegram_id)
+    logging.getLogger().addHandler(tg_handler)
+
     # Set Telegram webhook
     await bot.set_webhook(
         url=settings.webhook_full_url,

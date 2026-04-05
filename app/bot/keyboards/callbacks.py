@@ -30,6 +30,8 @@ class OrderCB(CallbackData, prefix="order"):
     #   negot_counter   — operator makes counter-offer
     #   negot_cancel    — operator cancels order from negotiation
     #   complete        — admin/operator marks order complete
+    #   refresh         — operator refreshes order card in-place (edit_message_text)
+    #   client_refresh  — client refreshes order card in-place (edit_message_text)
 
 
 class ReviewCB(CallbackData, prefix="review"):

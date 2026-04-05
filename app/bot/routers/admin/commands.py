@@ -1,9 +1,13 @@
+import logging
+
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.filters import IsAdmin
+
+logger = logging.getLogger(__name__)
 from app.db.models.order import OrderStatus
 from app.db.models.order_log import OrderLogAction
 from app.db.models.user import UserRole
@@ -197,7 +201,7 @@ async def cmd_confirm_payment(message: Message, session: AsyncSession):
                 f"✅ Оплата по заявке №{order_id} подтверждена — работа начата",
             )
         except Exception:
-            pass
+            logger.warning("Не удалось уведомить клиента о подтверждении оплаты (заявка №%d)", order_id, exc_info=True)
 
     if order.operator_id:
         operator = await UserRepo(session).get_by_id(order.operator_id)
@@ -208,7 +212,7 @@ async def cmd_confirm_payment(message: Message, session: AsyncSession):
                     f"✅ Оплата по заявке №{order_id} получена — приступайте к работе",
                 )
             except Exception:
-                pass
+                logger.warning("Не удалось уведомить оператора о подтверждении оплаты (заявка №%d)", order_id, exc_info=True)
 
     await message.answer(f"✅ Заявка №{order_id} переведена в статус «В работе»")
 
@@ -250,9 +254,78 @@ async def cmd_complete_order(message: Message, session: AsyncSession):
                 f"🎉 Заявка №{order_id} выполнена!\n📂 Посмотрите в разделе «История заявок»",
             )
         except Exception:
-            pass
+            logger.warning("Не удалось уведомить клиента о принудительном завершении заявки №%d", order_id, exc_info=True)
 
     await message.answer(f"✅ Заявка №{order_id} завершена")
+
+
+@router.message(Command("addadmin"), IsAdmin())
+async def cmd_add_admin(message: Message, session: AsyncSession):
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("Использование: /addadmin @username или /addadmin {telegram_id}")
+        return
+
+    target = args[1].strip()
+    repo = UserRepo(session)
+
+    if target.startswith("@"):
+        user = await repo.get_by_username(target.lstrip("@"))
+    elif target.lstrip("-").isdigit():
+        user = await repo.get_by_telegram_id(int(target))
+    else:
+        await message.answer("⚠️ Укажите @username или telegram_id")
+        return
+
+    if not user:
+        await message.answer("❌ Пользователь не найден — он должен сначала написать боту")
+        return
+
+    if user.role == UserRole.admin:
+        await message.answer(f"ℹ️ {user.full_name} уже является администратором")
+        return
+
+    await repo.set_role(user, UserRole.admin)
+    await message.answer(f"✅ {user.full_name} назначен администратором")
+
+
+@router.message(Command("removeadmin"), IsAdmin())
+async def cmd_remove_admin(message: Message, session: AsyncSession):
+    from app.config import settings as _settings
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("Использование: /removeadmin @username или /removeadmin {telegram_id}")
+        return
+
+    target = args[1].strip()
+    repo = UserRepo(session)
+
+    if target.startswith("@"):
+        user = await repo.get_by_username(target.lstrip("@"))
+    elif target.lstrip("-").isdigit():
+        user = await repo.get_by_telegram_id(int(target))
+    else:
+        await message.answer("⚠️ Укажите @username или telegram_id")
+        return
+
+    if not user:
+        await message.answer("❌ Пользователь не найден")
+        return
+
+    if user.telegram_id == _settings.admin_telegram_id:
+        await message.answer("⚠️ Нельзя снять главного администратора")
+        return
+
+    if user.telegram_id == message.from_user.id:
+        await message.answer("⚠️ Нельзя снять себя")
+        return
+
+    if user.role != UserRole.admin:
+        await message.answer(f"ℹ️ {user.full_name} не является администратором")
+        return
+
+    await repo.set_role(user, UserRole.client)
+    await message.answer(f"✅ {user.full_name} снят с должности администратора")
 
 
 @router.message(Command("commands"), IsAdmin())
@@ -261,6 +334,8 @@ async def cmd_commands(message: Message):
         "📋 Команды администратора:\n\n"
         "/addoperator @username — назначить оператора\n"
         "/deleteoperator @username — снять оператора\n"
+        "/addadmin @username — назначить администратора\n"
+        "/removeadmin @username — снять администратора\n"
         "/operators — список всех операторов\n"
         "/admins — список всех администраторов\n"
         "/stats — статистика заявок\n"

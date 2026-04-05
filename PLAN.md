@@ -45,6 +45,7 @@ tg-bot_for_avito/
 │   │   │       ├── commands.py    # /addoperator /deleteoperator /operators /admins
 │   │   │       │                  # /stats /endauction /confirmpayment /completeorder /commands
 │   │   │       └── reviews.py     # Модерация отзывов (одобрить/отклонить)
+│   │   │   └── errors.py          # Aiogram error handler → алерт в личку админа
 │   │   ├── filters/
 │   │   │   ├── is_admin.py        # telegram_id == settings.admin_telegram_id
 │   │   │   ├── is_operator.py     # user.role in (operator, admin)
@@ -87,6 +88,8 @@ tg-bot_for_avito/
 │   │   ├── bid_repo.py            # upsert, get_min_bid (ORDER BY amount, created_at), get_losers
 │   │   ├── review_repo.py         # create(rating=), get_approved, set_status
 │   │   └── message_repo.py
+│   ├── utils/
+│   │   └── telegram_log_handler.py  # Logging handler → ERROR+ записи в личку админа
 │   ├── services/
 │   │   ├── auction_service.py     # start_auction, place_bid, close_auction, recover_overdue
 │   │   └── payment_service.py     # Robokassa: generate_link + verify_callback
@@ -105,6 +108,9 @@ tg-bot_for_avito/
 │       │                          # solution_files.file_type, order lifecycle fields
 │       └── 0005_schema_fixes.py   # bids.amount precision Numeric(12,2),
 │                                  # messages.text NOT NULL
+├── backup/
+│   ├── Dockerfile                 # python:3.11-slim + postgresql-client (apt)
+│   └── backup.py                  # pg_dump → gzip → Telegram, цикл раз в сутки в 03:00 UTC
 ├── .env.example
 ├── alembic.ini
 ├── docker-compose.yml
@@ -285,10 +291,10 @@ SQLAlchemy хранит **Python-имена enum** (не `.value`). В БД: `pe
 
 | Статус | Карточка | Клавиатура |
 |--------|----------|------------|
-| `pending` / `in_progress` | `format_client_card` | Добавить комментарий \| Добавить файлы \| (Отменить если pending) \| ← Назад |
-| `awaiting_payment` | `format_client_card` | (Я оплатил — только в ручном режиме) \| Обсудить цену \| Отменить \| ← Назад |
-| `completed` | `format_client_history_card` | 📂 Решение \| 💬 Задать вопрос \| ⭐ Оставить отзыв \| ← Назад |
-| `cancelled` | `format_client_history_card` | ← Назад |
+| `pending` / `in_progress` | `format_client_card` | Добавить комментарий \| Добавить файлы \| (Отменить если pending) \| 🔄 Обновить \| ← Назад |
+| `awaiting_payment` | `format_client_card` | (Я оплатил — только в ручном режиме) \| Обсудить цену \| Отменить \| 🔄 Обновить \| ← Назад |
+| `completed` | `format_client_history_card` | 📂 Решение \| 💬 Задать вопрос \| ⭐ Оставить отзыв \| 🔄 Обновить \| ← Назад |
+| `cancelled` | `format_client_history_card` | 🔄 Обновить \| ← Назад |
 
 - "← Назад" — **удаляет** сообщение-карточку (try/except на случай старого сообщения) и показывает список
 - "Отменить заявку" → подтверждение → "Да/Нет". "Нет" удаляет подтверждение (try/except)
@@ -312,10 +318,12 @@ SQLAlchemy хранит **Python-имена enum** (не `.value`). В БД: `pe
 
 | Статус заявки | Кнопки |
 |--------------|--------|
-| `pending` (свободная) | Могу взять \| Файлы |
-| `in_progress` (моя) | Файлы \| Написать клиенту \| Добавить заметку \| Отправить решение |
-| `awaiting_payment` (моя) | 📤 Отправить реквизиты \| Файлы \| Написать клиенту |
-| `completed` / `cancelled` | нет кнопок |
+| `pending` (свободная) | Могу взять \| Файлы \| 🔄 Обновить |
+| `in_progress` (моя) | Файлы \| Написать клиенту \| Добавить заметку \| Отправить решение \| 🔄 Обновить |
+| `awaiting_payment` (моя) | 📤 Отправить реквизиты \| Файлы \| Написать клиенту \| 🔄 Обновить |
+| `completed` / `cancelled` | 🔄 Обновить |
+
+Кнопка `🔄 Обновить` (action=`"refresh"` для операторов, `"client_refresh"` для клиентов) — делает `edit_message_text` на месте. При `MessageNotModified` → алерт "✅ Уже актуально".
 
 **FSM-защиты (SolutionStates.waiting_files)**:
 Пока идёт загрузка решения — кнопки "Написать клиенту", "Добавить заметку", "Могу взять" возвращают алерт вместо сброса FSM.
@@ -334,6 +342,8 @@ SQLAlchemy хранит **Python-имена enum** (не `.value`). В БД: `pe
 Команды (все только в личке, IsAdmin):
 - `/addoperator @username` или `/addoperator {telegram_id}` — назначить оператора
 - `/deleteoperator @username` — снять оператора (с гардом на активные заявки)
+- `/addadmin @username` или `/addadmin {telegram_id}` — назначить администратора
+- `/removeadmin @username` — снять администратора (гарды: нельзя снять ADMIN_TELEGRAM_ID, нельзя снять себя)
 - `/operators` — список всех операторов с telegram_id
 - `/admins` — список всех администраторов
 - `/stats` — сводка по статусам заявок
@@ -381,6 +391,7 @@ ROBOKASSA_PASS1=
 ROBOKASSA_PASS2=
 ROBOKASSA_IS_TEST=true
 REDIS_URL=redis://redis:6379/0
+BACKUP_CHAT_ID=                  # telegram chat_id группы для ежедневных бэкапов БД
 ```
 
 ---
@@ -397,6 +408,15 @@ services:
     depends_on: [db, redis]
     ports: ["8000:8000"]
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+  backup:
+    build: ./backup
+    env_file: .env
+    environment: [BACKUP_CHAT_ID]
+    depends_on: [db]
+    volumes: [backup_data:/backups]
+    # Запускается раз в сутки в 03:00 UTC — pg_dump → gzip → Telegram-группа
+    # Хранит последние 30 дней локально, Telegram хранит вечно
+    # Бот должен быть участником BACKUP_CHAT_ID
 ```
 
 Полный сброс БД (заявки с №1):
@@ -422,6 +442,9 @@ docker-compose up -d --build
 | `app/bot/routers/client/order_list.py` | client_view action + все card actions клиента |
 | `app/bot/routers/operator/notes.py` | FSM загрузки решения: файлы + текстовый комментарий |
 | `app/bot/routers/operator/messaging.py` | Переговоры по цене (negot_*), реквизиты |
+| `app/bot/routers/errors.py` | Aiogram error handler: трейсбек → личка ADMIN_TELEGRAM_ID |
+| `app/utils/telegram_log_handler.py` | Logging handler: logger.error() → Telegram |
+| `backup/backup.py` | Скрипт бэкапа: pg_dump + gzip + send to Telegram + retention 30d |
 
 ---
 
@@ -485,6 +508,38 @@ docker-compose up -d --build
 - **action="view" конфликт** — клиентский список использует `action="client_view"`, иначе операторский хэндлер перехватывает
 - **"Перейти к заявке" не работает** — оператор не написал /start боту. Добавлен try/except + алерт
 - **UnboundLocalError в solution_done** — дублирующий `from app.db.models.order import OrderStatus` внутри функции делал имя локальным → обращение до import → ошибка. Удалён дублирующий import.
+
+### Инфраструктурные улучшения (сессия 2)
+
+**Мониторинг ошибок (замена Sentry — своя реализация):**
+- `app/bot/routers/errors.py` — aiogram `@router.errors()`: ловит необработанные исключения → трейсбек → личка ADMIN_TELEGRAM_ID
+- `app/utils/telegram_log_handler.py` — `logging.Handler` уровня ERROR: ловит `logger.error()` / `logger.exception()` → Telegram через `loop.create_task`
+- Инициализируется в `app/main.py` lifespan startup
+
+**Логирование (замена except: pass):**
+- В 5 файлах заменены `except Exception: pass` на `logger.warning("...", exc_info=True)` для всех `bot.send_message` уведомлений
+- `message.delete()` / `edit_message_text(MessageNotModified)` — оставлены как `pass` (ожидаемые ошибки)
+
+**Кнопка 🔄 Обновить на карточках заявок:**
+- Операторские: `free_order_card_kb`, `my_order_card_kb`, `awaiting_payment_operator_kb` + `operator_refresh_only_kb` (completed/cancelled)
+- Клиентские: все четыре клавиатуры (`active`, `awaiting_payment`, `completed`, `cancelled`)
+- `action="refresh"` → хендлер в `operator/menu.py`, `edit_message_text` на месте
+- `action="client_refresh"` → хендлер в `client/order_list.py`, аналогично
+- При `MessageNotModified` → "✅ Уже актуально" (два action разделены чтобы роутеры не конфликтовали)
+
+**Управление администраторами:**
+- `/addadmin @username|{id}` — назначить администратора (только IsAdmin)
+- `/removeadmin @username|{id}` — снять (гварды: нельзя снять ADMIN_TELEGRAM_ID, нельзя снять себя)
+- Обновлён `/commands`
+
+**Резервное копирование БД:**
+- Новый Docker-сервис `backup` (`backup/Dockerfile` + `backup/backup.py`)
+- `python:3.11-slim` + `postgresql-client` через apt
+- Ежедневно в 03:00 UTC: `pg_dump` → gzip → `sendDocument` в Telegram-группу `BACKUP_CHAT_ID`
+- Локальное хранение: 30 дней; Telegram хранит вечно
+- `BACKUP_CHAT_ID` в `.env` — бот должен быть участником группы
+
+---
 
 ### Исправленные баги (аудит)
 1. **reviews.py** — `got_review_text` возвращал `client_main_kb()` для всех ролей → добавлена проверка `user.role == UserRole.client`
