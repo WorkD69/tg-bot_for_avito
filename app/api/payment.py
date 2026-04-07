@@ -33,6 +33,20 @@ async def robokassa_callback(
             order_repo = OrderRepo(session)
             order = await order_repo.get_by_invoice_id(InvId)
             if not order:
+                # Check if this is a stale callback for an old payment_invoice_id.
+                # invoice_id format: "{order_id}_{payment_revision}".
+                # If the order exists but its revision has advanced, Robokassa is
+                # retrying an outdated link — acknowledge to stop retries.
+                parts = InvId.split("_", 1)
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    stale_order = await order_repo.get_by_id(int(parts[0]))
+                    cb_revision = int(parts[1])
+                    if stale_order and cb_revision < stale_order.payment_revision:
+                        logger.info(
+                            "Robokassa: stale InvId=%s (callback revision=%s < current=%s) — acknowledging to stop retries",
+                            InvId, cb_revision, stale_order.payment_revision,
+                        )
+                        return PlainTextResponse(f"OK{InvId}")
                 logger.warning("Robokassa: order not found for InvId=%s", InvId)
                 return PlainTextResponse("not found", status_code=404)
 

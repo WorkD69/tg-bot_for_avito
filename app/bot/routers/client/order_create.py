@@ -22,6 +22,14 @@ MSK = timezone(timedelta(hours=3))
 
 @router.message(F.text == BTN_CREATE, IsClient())
 async def start_order(message: Message, state: FSMContext, session: AsyncSession, user: User):
+    # Guard: don't interrupt an already-active FSM (e.g. file upload or comment edit)
+    current = await state.get_state()
+    if current is not None:
+        await message.answer(
+            "⚠️ Вы уже выполняете действие — завершите его или отмените через /cancel"
+        )
+        return
+
     # Guard: check active order limit before starting the FSM
     active_orders = await OrderRepo(session).get_client_active_orders(user.id)
     if len(active_orders) >= 5:

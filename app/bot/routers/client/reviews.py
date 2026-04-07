@@ -9,6 +9,7 @@ from app.bot.keyboards.callbacks import OrderCB, RatingCB, ReviewListCB  # Revie
 from app.bot.keyboards.client_reply import BTN_REVIEWS, client_main_kb
 from app.bot.states.note import ReviewStates
 from app.config import settings
+from app.db.models.order import OrderStatus
 from app.db.models.user import User, UserRole
 from app.repositories.order_repo import OrderRepo
 from app.repositories.review_repo import ReviewRepo
@@ -21,20 +22,33 @@ async def reviews_menu(message: Message):
     await message.answer("⭐ Отзывы:", reply_markup=reviews_menu_kb())
 
 
+REVIEWS_PAGE_SIZE = 5
+
+
 @router.callback_query(ReviewListCB.filter(F.action == "all"))
-async def all_reviews(callback: CallbackQuery, session: AsyncSession):
+async def all_reviews(callback: CallbackQuery, callback_data: ReviewListCB, session: AsyncSession):
+    from app.bot.keyboards.admin_inline import reviews_pagination_kb
     reviews = await ReviewRepo(session).get_approved()
     if not reviews:
         await callback.message.answer("📭 Пока нет одобренных отзывов")
         await callback.answer()
         return
 
+    total_pages = max(1, (len(reviews) + REVIEWS_PAGE_SIZE - 1) // REVIEWS_PAGE_SIZE)
+    page = max(0, min(callback_data.page, total_pages - 1))
+    page_reviews = reviews[page * REVIEWS_PAGE_SIZE:(page + 1) * REVIEWS_PAGE_SIZE]
+
     lines = []
-    for r in reviews:
+    for r in page_reviews:
         name = r.client.full_name
         stars = "⭐" * r.rating
         lines.append(f"{stars} {name}:\n{r.text}")
-    await callback.message.answer("\n\n".join(lines))
+
+    header = f"⭐ Отзывы ({page + 1}/{total_pages}):" if total_pages > 1 else "⭐ Отзывы:"
+    text = header + "\n\n" + "\n\n".join(lines)
+    kb = reviews_pagination_kb(page, total_pages)
+
+    await callback.message.answer(text, reply_markup=kb)
     await callback.answer()
 
 
@@ -53,9 +67,12 @@ async def start_review(
     if not order or order.client_id != user.id:
         await callback.answer("❌ Заявка не найдена", show_alert=True)
         return
+    if order.status != OrderStatus.completed:
+        await callback.answer("⚠️ Отзыв можно оставить только по выполненной заявке", show_alert=True)
+        return
 
-    existing = await ReviewRepo(session).get_by_client(user.id)
-    if any(r.order_id == order.id for r in existing):
+    existing = await ReviewRepo(session).get_by_order_client(order.id, user.id)
+    if existing:
         await callback.answer("ℹ️ Вы уже оставили отзыв по этой заявке", show_alert=True)
         return
 

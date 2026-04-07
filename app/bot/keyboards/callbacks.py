@@ -42,6 +42,7 @@ class ReviewCB(CallbackData, prefix="review"):
 
 class ReviewListCB(CallbackData, prefix="reviews"):
     action: str
+    page: int = 0
     # action values: all | mine
 
 
@@ -55,8 +56,13 @@ class NegotCB(CallbackData, prefix="negot"):
 
     proposed_amount: decimal string of client's proposed price (empty = no price proposal).
     Only meaningful for action="accept" — encodes which amount the operator is accepting.
+
+    revision: payment_revision of the order at the time this message was sent.
+    Checked on Accept/Counter to detect stale callbacks (client sent multiple counter-offers).
+    If order.payment_revision != revision → this negotiation round is outdated → reject.
     """
     order_id: int
     action: str
     proposed_amount: str = ""
+    revision: int = 0
     # action values: accept | counter | cancel

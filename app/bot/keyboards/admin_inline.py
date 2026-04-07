@@ -41,8 +41,26 @@ def reviews_menu_kb() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="Отзывы о нас",
-                    callback_data=ReviewListCB(action="all").pack(),
+                    callback_data=ReviewListCB(action="all", page=0).pack(),
                 ),
             ]
         ]
     )
+
+
+def reviews_pagination_kb(page: int, total_pages: int) -> InlineKeyboardMarkup | None:
+    """Prev/Next navigation for reviews list. Returns None if only one page."""
+    if total_pages <= 1:
+        return None
+    row = []
+    if page > 0:
+        row.append(InlineKeyboardButton(
+            text="← Назад",
+            callback_data=ReviewListCB(action="all", page=page - 1).pack(),
+        ))
+    if page < total_pages - 1:
+        row.append(InlineKeyboardButton(
+            text="Далее →",
+            callback_data=ReviewListCB(action="all", page=page + 1).pack(),
+        ))
+    return InlineKeyboardMarkup(inline_keyboard=[row])

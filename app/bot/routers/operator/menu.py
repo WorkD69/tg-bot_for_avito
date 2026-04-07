@@ -32,8 +32,8 @@ def _pick_kb(order, viewer_id: int):
         if order.status == OrderStatus.awaiting_payment:
             return awaiting_payment_operator_kb(order.id)
         return my_order_card_kb(order.id)
-    # Someone else's assigned order — read-only, no buttons
-    return None
+    # Someone else's assigned order — read-only, refresh only
+    return operator_refresh_only_kb(order.id)
 
 
 # ── Reply buttons IN GROUP → send list to operator DM ────────────────────────
@@ -106,7 +106,7 @@ async def group_view_order(
         return
 
     from app.db.models.user import UserRole
-    text = format_order_card(order, is_admin=(user.role == UserRole.admin))
+    text = format_order_card(order, is_admin=(user.role == UserRole.admin), viewer_id=user.id)
     kb = _pick_kb(order, user.id)
 
     try:
@@ -134,7 +134,7 @@ async def dm_view_order(
         return
 
     from app.db.models.user import UserRole
-    text = format_order_card(order, is_admin=(user.role == UserRole.admin))
+    text = format_order_card(order, is_admin=(user.role == UserRole.admin), viewer_id=user.id)
     kb = _pick_kb(order, user.id)
 
     await callback.message.answer(text, reply_markup=kb)
@@ -156,7 +156,7 @@ async def back_to_card(
         return
 
     from app.db.models.user import UserRole
-    text = format_order_card(order, is_admin=(user.role == UserRole.admin))
+    text = format_order_card(order, is_admin=(user.role == UserRole.admin), viewer_id=user.id)
     kb = _pick_kb(order, user.id)
 
     await callback.message.edit_text(text, reply_markup=kb)
@@ -178,7 +178,7 @@ async def refresh_order_card(
         return
 
     from app.db.models.user import UserRole
-    text = format_order_card(order, is_admin=(user.role == UserRole.admin))
+    text = format_order_card(order, is_admin=(user.role == UserRole.admin), viewer_id=user.id)
     kb = _pick_kb(order, user.id)
 
     try:

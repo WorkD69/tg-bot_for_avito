@@ -33,6 +33,17 @@ async def lifespan(app: FastAPI):
     from app.services.auction_service import recover_overdue_auctions
     await recover_overdue_auctions(bot)
 
+    # Daily reminder: unconfirmed payments (fires at 10:00 UTC every day)
+    from app.scheduler.jobs import remind_unconfirmed_payments
+    scheduler.add_job(
+        remind_unconfirmed_payments,
+        trigger="cron",
+        hour=10,
+        minute=0,
+        id="remind_unconfirmed_payments",
+        replace_existing=True,
+    )
+
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────────────────

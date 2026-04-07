@@ -235,6 +235,17 @@ async def cancel_order_confirm(
         reply_markup=group_new_order_kb(order.id),
     ))
 
+    # If operator was already assigned (awaiting_payment) — notify them directly in DM
+    # Group notifications are easy to miss when operator is handling multiple orders
+    if order.operator_id is not None:
+        from app.repositories.user_repo import UserRepo
+        operator = await UserRepo(session).get_by_id(order.operator_id)
+        if operator:
+            post_commit.append(_bot.send_message(
+                operator.telegram_id,
+                f"❌ Клиент отменил заявку №{order.id} — оплата не будет произведена",
+            ))
+
 
 # ── awaiting_payment: client confirmed payment ────────────────────────────────
 
@@ -297,6 +308,15 @@ async def client_negotiate(
     session: AsyncSession,
     user: User,
 ):
+    # FSM guard — don't silently overwrite an active FSM (e.g. order creation, file upload)
+    current_state = await state.get_state()
+    if current_state is not None and current_state != str(NegotiationStates.waiting_text):
+        await callback.answer(
+            "⚠️ Вы уже выполняете другое действие — завершите его или отмените через /cancel",
+            show_alert=True,
+        )
+        return
+
     order = await OrderRepo(session).get_by_id(callback_data.order_id)
     if not order or order.client_id != user.id:
         await callback.answer("❌ Заявка не найдена", show_alert=True)
@@ -309,13 +329,14 @@ async def client_negotiate(
     await state.update_data(order_id=order.id)
     await callback.message.answer(
         "💬 Напишите ваш вопрос или предложите встречную сумму\n\n"
-        "Например: «Готов оплатить 1200 ₽» или «Уточните, что входит в работу»"
+        "Например: «Готов оплатить 1200 ₽» или «Уточните, что входит в работу»\n\n"
+        "Для отмены — /cancel"
     )
     await callback.answer()
 
 
 @router.message(NegotiationStates.waiting_text, F.text, IsClient())
-async def client_negotiate_done(message: Message, state: FSMContext, session: AsyncSession, user: User):
+async def client_negotiate_done(message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list):
     data = await state.get_data()
     order_id: int = data["order_id"]
     await state.clear()
@@ -350,15 +371,12 @@ async def client_negotiate_done(message: Message, state: FSMContext, session: As
         client_name = user.full_name
         proposed_str = str(counter_amount) if counter_amount else ""
         counter_label = f"\n💰 Предложенная сумма: {_money(counter_amount)}" if counter_amount else ""
-        try:
-            await bot.send_message(
-                operator.telegram_id,
-                f"💬 Сообщение от клиента {client_name} по заявке №{order_id}:{counter_label}\n\n"
-                f"{message.text}",
-                reply_markup=negot_operator_kb(order_id, proposed_amount=proposed_str),
-            )
-        except Exception:
-            pass
+        post_commit.append(bot.send_message(
+            operator.telegram_id,
+            f"💬 Сообщение от клиента {client_name} по заявке №{order_id}:{counter_label}\n\n"
+            f"{message.text}",
+            reply_markup=negot_operator_kb(order_id, proposed_amount=proposed_str, revision=order.payment_revision),
+        ))
 
     await message.answer("✅ Ваше сообщение отправлено оператору — ожидайте ответа")
 
@@ -373,6 +391,14 @@ async def add_comment_start(
     session: AsyncSession,
     user: User,
 ):
+    current_state = await state.get_state()
+    if current_state in (str(OrderEditStates.waiting_comment), str(OrderEditStates.waiting_files)):
+        await callback.answer(
+            "⚠️ Вы уже редактируете заявку — завершите текущее действие или отправьте /done",
+            show_alert=True,
+        )
+        return
+
     order = await OrderRepo(session).get_by_id(callback_data.order_id)
     if not order or order.client_id != user.id:
         await callback.answer("❌ Заявка не найдена", show_alert=True)
@@ -421,6 +447,16 @@ async def add_comment_done(
         reply_markup=group_new_order_kb(order_id),
     ))
 
+    # Notify assigned operator directly in DM — group notifications are easy to miss
+    if order.operator_id is not None:
+        from app.repositories.user_repo import UserRepo
+        operator = await UserRepo(session).get_by_id(order.operator_id)
+        if operator:
+            post_commit.append(_bot.send_message(
+                operator.telegram_id,
+                f"✏️ Клиент добавил комментарий к заявке №{order_id} — проверьте обновление",
+            ))
+
 
 # ── Files ─────────────────────────────────────────────────────────────────────
 
@@ -432,6 +468,14 @@ async def add_files_start(
     session: AsyncSession,
     user: User,
 ):
+    current_state = await state.get_state()
+    if current_state in (str(OrderEditStates.waiting_comment), str(OrderEditStates.waiting_files)):
+        await callback.answer(
+            "⚠️ Вы уже редактируете заявку — завершите текущее действие или отправьте /done",
+            show_alert=True,
+        )
+        return
+
     order = await OrderRepo(session).get_by_id(callback_data.order_id, load_relations=True)
     if not order or order.client_id != user.id:
         await callback.answer("❌ Заявка не найдена", show_alert=True)
@@ -513,6 +557,55 @@ async def add_files_done(
         reply_markup=group_new_order_kb(order_id),
     ))
 
+    # Notify assigned operator directly in DM — group notifications are easy to miss
+    if order.operator_id is not None:
+        from app.repositories.user_repo import UserRepo
+        operator = await UserRepo(session).get_by_id(order.operator_id)
+        if operator:
+            post_commit.append(_bot.send_message(
+                operator.telegram_id,
+                f"📎 Клиент добавил файлы к заявке №{order_id} — проверьте обновление",
+            ))
+
+
+# ── Dispute (client) ─────────────────────────────────────────────────────────
+
+@router.callback_query(OrderCB.filter(F.action == "dispute"), IsClient())
+async def client_dispute(
+    callback: CallbackQuery,
+    callback_data: OrderCB,
+    session: AsyncSession,
+    user: User,
+    post_commit: list,
+):
+    order_repo = OrderRepo(session)
+    order = await order_repo.get_by_id(callback_data.order_id)
+    if not order or order.client_id != user.id:
+        await callback.answer("❌ Заявка не найдена", show_alert=True)
+        return
+    if order.status != OrderStatus.completed:
+        await callback.answer("⚠️ Оспорить можно только выполненную заявку", show_alert=True)
+        return
+
+    await order_repo.add_log(
+        order_id=order.id, actor_id=user.id,
+        action=OrderLogAction.dispute_opened,
+        detail="Client opened dispute",
+    )
+
+    from app.bot.instance import bot as _bot
+    client_name = f"@{user.username}" if user.username else user.full_name
+    post_commit.append(_bot.send_message(
+        settings.admin_telegram_id,
+        f"⚠️ Клиент {client_name} оспаривает результат по заявке №{order.id}\n"
+        f"Свяжитесь с клиентом и рассмотрите заявку",
+    ))
+
+    await callback.message.answer(
+        "⚠️ Спор открыт — администратор получил уведомление и свяжется с вами"
+    )
+    await callback.answer()
+
 
 # ── View solution (client) ────────────────────────────────────────────────────
 
@@ -533,6 +626,13 @@ async def view_solution(
         return
 
     await callback.answer()
+
+    # Show operator's last text comment before files (messages already loaded)
+    from app.db.models.message import MessageDirection
+    op_messages = [m for m in order.messages if m.direction == MessageDirection.operator_to_client]
+    if op_messages:
+        await callback.message.answer(f"💬 Комментарий оператора:\n{op_messages[-1].text}")
+
     await callback.message.answer(f"📎 Решение по заявке №{order.id}:")
     for sf in order.solution_files:
         if sf.file_type == "photo":

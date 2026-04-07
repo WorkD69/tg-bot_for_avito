@@ -115,7 +115,7 @@ async def _add_solution_file(message: Message, state: FSMContext, file_id: str, 
 
 
 @router.message(SolutionStates.waiting_files, F.text == "/done", IsOperator())
-async def solution_done(message: Message, state: FSMContext, session: AsyncSession, user: User):
+async def solution_done(message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list):
     data = await state.get_data()
     files: list = data.get("files", [])
     comment: str = data.get("comment", "").strip()
@@ -174,20 +174,67 @@ async def solution_done(message: Message, state: FSMContext, session: AsyncSessi
     client = await UserRepo(session).get_by_id(order.client_id)
     if client:
         comment_line = f"\n\n💬 Комментарий оператора:\n{comment}" if comment else ""
-        try:
-            await bot.send_message(
-                client.telegram_id,
-                f"🎉 Заявка №{order_id} выполнена!{comment_line}\n\n"
-                "📂 Посмотрите в разделе «История заявок»",
-            )
-        except Exception:
-            logger.warning("Не удалось уведомить клиента о завершении заявки №%d", order_id, exc_info=True)
+        post_commit.append(bot.send_message(
+            client.telegram_id,
+            f"🎉 Заявка №{order_id} выполнена!{comment_line}\n\n"
+            "📂 Посмотрите в разделе «История заявок»",
+        ))
 
     await message.answer(f"✅ Решение по заявке №{order_id} отправлено клиенту — заявка завершена")
 
 
-@router.message(SolutionStates.waiting_files, F.text, IsOperator())
+@router.message(SolutionStates.waiting_files, F.text, ~F.text.startswith("/"), IsOperator())
 async def solution_comment(message: Message, state: FSMContext):
-    """Operator can send a text comment alongside solution files."""
+    """Operator can send a text comment alongside solution files.
+    Commands (starting with /) are excluded so /cancel falls through to the universal handler.
+    """
     await state.update_data(comment=message.text.strip())
     await message.answer("✅ Комментарий сохранён — отправьте файлы или /done")
+
+
+# ── Operator cannot complete order ───────────────────────────────────────────
+
+@router.callback_query(OrderCB.filter(F.action == "cant_do"), IsOperator())
+async def cant_do_order(
+    callback: CallbackQuery,
+    callback_data: OrderCB,
+    session: AsyncSession,
+    user: User,
+    post_commit: list,
+):
+    order = await OrderRepo(session).get_by_id(callback_data.order_id)
+    if not order or order.operator_id != user.id:
+        await callback.answer("❌ Заявка не найдена или не ваша", show_alert=True)
+        return
+    if order.status != OrderStatus.in_progress:
+        await callback.answer("⚠️ Это действие доступно только для заявки в работе", show_alert=True)
+        return
+
+    # Save note so the event is traceable
+    session.add(OperatorNote(
+        order_id=order.id,
+        operator_id=user.id,
+        text="Оператор сообщил: не могу выполнить заявку",
+    ))
+
+    from app.bot.instance import bot
+    from app.config import settings
+    from app.repositories.user_repo import UserRepo
+
+    # Notify admin — deferred after commit
+    post_commit.append(bot.send_message(
+        settings.admin_telegram_id,
+        f"⚠️ Оператор {user.full_name} сообщает, что не может выполнить заявку №{order.id}\n"
+        f"Для отмены: /cancelorder {order.id}",
+    ))
+
+    # Notify client — deferred after commit
+    client = await UserRepo(session).get_by_id(order.client_id)
+    if client:
+        post_commit.append(bot.send_message(
+            client.telegram_id,
+            f"⏳ По заявке №{order.id} возникли трудности — администратор свяжется с вами",
+        ))
+
+    await callback.message.answer("✅ Администратор уведомлён")
+    await callback.answer()

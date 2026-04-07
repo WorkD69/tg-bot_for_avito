@@ -63,12 +63,11 @@ class AuctionService:
         # Must await this one synchronously: we need msg.message_id to persist.
         # This is an acceptable pre-commit send — if commit later fails, the group
         # message is a phantom but the order creation rolled back (very rare edge case).
-        msg = await self.bot.send_message(
+        await self.bot.send_message(
             settings.operator_group_id,
             f"🆕 Новая заявка №{order.id} создана",
             reply_markup=group_new_order_kb(order.id),
         )
-        await OrderRepo(self.session).set_group_message_id(order, msg.message_id)
 
         # Reply keyboard does not need a return value — defer it
         self._defer(
@@ -116,8 +115,12 @@ class AuctionService:
                 ))
             return
 
-        # Atomic upsert — safe against parallel bids from same operator
+        # Check if operator already has a bid — to distinguish "new" vs "updated"
         bid_repo = BidRepo(self.session)
+        existing_bid = await bid_repo.get_operator_bid(order_id, operator_id)
+        is_update = existing_bid is not None
+
+        # Atomic upsert — safe against parallel bids from same operator
         await bid_repo.upsert(order_id=order_id, operator_id=operator_id, amount=amount)
 
         await order_repo.add_log(
@@ -134,10 +137,14 @@ class AuctionService:
         if operator_tg_id:
             from app.bot.formatters import format_order_card
             from app.bot.keyboards.order_inline import free_order_card_kb
-            card_text = format_order_card(order)
+            card_text = format_order_card(order, viewer_id=operator_id)
+            if is_update:
+                confirm_text = f"🔄 Ставка обновлена: {amount} ₽ по заявке №{order_id}\n\n"
+            else:
+                confirm_text = f"✅ Ставка {amount} ₽ по заявке №{order_id} принята\n\n"
             self._defer(self.bot.send_message(
                 operator_tg_id,
-                f"✅ Ставка {amount} ₽ по заявке №{order_id} принята\n\n" + card_text,
+                confirm_text + card_text,
                 reply_markup=free_order_card_kb(order_id),
             ))
 

@@ -28,6 +28,16 @@ async def start_client_message(
     session: AsyncSession,
     user: User,
 ):
+    # FSM guard — don't silently overwrite an active FSM
+    from app.bot.states.note import ClientMessagingStates as _CMS
+    current_state = await state.get_state()
+    if current_state is not None and current_state != str(_CMS.waiting_message):
+        await callback.answer(
+            "⚠️ Вы уже выполняете другое действие — завершите его или отмените через /cancel",
+            show_alert=True,
+        )
+        return
+
     order = await OrderRepo(session).get_by_id(callback_data.order_id)
     if not order or order.client_id != user.id:
         await callback.answer("❌ Заявка не найдена", show_alert=True)
@@ -50,7 +60,7 @@ async def start_client_message(
 
 
 @router.message(ClientMessagingStates.waiting_message, F.text, IsClient())
-async def send_client_message(message: Message, state: FSMContext, session: AsyncSession, user: User):
+async def send_client_message(message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list):
     data = await state.get_data()
     order_id: int = data["order_id"]
     operator_db_id: int = data["operator_id"]
@@ -80,12 +90,9 @@ async def send_client_message(message: Message, state: FSMContext, session: Asyn
 
     from app.bot.instance import bot
     client_name = user.full_name
-    try:
-        await bot.send_message(
-            operator.telegram_id,  # correct: telegram_id, not DB id
-            f"💬 Сообщение от клиента {client_name} по заявке №{order_id}:\n\n{message.text}",
-        )
-    except Exception:
-        logger.warning("Не удалось отправить сообщение оператору по заявке №%d", order_id, exc_info=True)
+    post_commit.append(bot.send_message(
+        operator.telegram_id,
+        f"💬 Сообщение от клиента {client_name} по заявке №{order_id}:\n\n{message.text}",
+    ))
 
     await message.answer("✅ Сообщение отправлено оператору")

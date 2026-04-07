@@ -36,11 +36,34 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Port 8000 exposed for local dev (ngrok). When deploying with real domain, Caddy
+    # reaches the bot via internal Docker network — can comment this out then.
     ports:
       - "8000:8000"
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - bot
 
   backup:
     build: ./backup
@@ -58,3 +81,5 @@ volumes:
   postgres_data:
   redis_data:
   backup_data:
+  caddy_data:
+  caddy_config:

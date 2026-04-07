@@ -158,7 +158,7 @@ async def cmd_end_auction(message: Message, session: AsyncSession, post_commit: 
 
 
 @router.message(Command("confirmpayment"), IsAdmin())
-async def cmd_confirm_payment(message: Message, session: AsyncSession):
+async def cmd_confirm_payment(message: Message, session: AsyncSession, post_commit: list):
     args = (message.text or "").split(maxsplit=1)
     if len(args) < 2 or not args[1].strip().isdigit():
         await message.answer("Использование: /confirmpayment {order_id}")
@@ -195,30 +195,24 @@ async def cmd_confirm_payment(message: Message, session: AsyncSession):
     from app.bot.instance import bot
     client = await UserRepo(session).get_by_id(order.client_id)
     if client:
-        try:
-            await bot.send_message(
-                client.telegram_id,
-                f"✅ Оплата по заявке №{order_id} подтверждена — работа начата",
-            )
-        except Exception:
-            logger.warning("Не удалось уведомить клиента о подтверждении оплаты (заявка №%d)", order_id, exc_info=True)
+        post_commit.append(bot.send_message(
+            client.telegram_id,
+            f"✅ Оплата по заявке №{order_id} подтверждена — работа начата",
+        ))
 
     if order.operator_id:
         operator = await UserRepo(session).get_by_id(order.operator_id)
         if operator:
-            try:
-                await bot.send_message(
-                    operator.telegram_id,
-                    f"✅ Оплата по заявке №{order_id} получена — приступайте к работе",
-                )
-            except Exception:
-                logger.warning("Не удалось уведомить оператора о подтверждении оплаты (заявка №%d)", order_id, exc_info=True)
+            post_commit.append(bot.send_message(
+                operator.telegram_id,
+                f"✅ Оплата по заявке №{order_id} получена — приступайте к работе",
+            ))
 
     await message.answer(f"✅ Заявка №{order_id} переведена в статус «В работе»")
 
 
 @router.message(Command("completeorder"), IsAdmin())
-async def cmd_complete_order(message: Message, session: AsyncSession):
+async def cmd_complete_order(message: Message, session: AsyncSession, post_commit: list):
     """Admin can forcibly complete an order."""
     args = (message.text or "").split(maxsplit=1)
     if len(args) < 2 or not args[1].strip().isdigit():
@@ -248,15 +242,63 @@ async def cmd_complete_order(message: Message, session: AsyncSession):
     from app.bot.instance import bot
     client = await UserRepo(session).get_by_id(order.client_id)
     if client:
-        try:
-            await bot.send_message(
-                client.telegram_id,
-                f"🎉 Заявка №{order_id} выполнена!\n📂 Посмотрите в разделе «История заявок»",
-            )
-        except Exception:
-            logger.warning("Не удалось уведомить клиента о принудительном завершении заявки №%d", order_id, exc_info=True)
+        post_commit.append(bot.send_message(
+            client.telegram_id,
+            f"🎉 Заявка №{order_id} выполнена!\n📂 Посмотрите в разделе «История заявок»",
+        ))
 
     await message.answer(f"✅ Заявка №{order_id} завершена")
+
+
+@router.message(Command("cancelorder"), IsAdmin())
+async def cmd_cancel_order(message: Message, session: AsyncSession, post_commit: list):
+    """Admin can forcibly cancel an order in any non-final status."""
+    args = (message.text or "").split(maxsplit=1)
+    if len(args) < 2 or not args[1].strip().isdigit():
+        await message.answer("Использование: /cancelorder {order_id}")
+        return
+
+    order_id = int(args[1].strip())
+    order_repo = OrderRepo(session)
+    order = await order_repo.get_by_id_for_update(order_id)
+    if not order:
+        await message.answer("❌ Заявка не найдена")
+        return
+
+    final = (OrderStatus.completed, OrderStatus.cancelled)
+    if order.status in final:
+        await message.answer(
+            f"⚠️ Заявка №{order_id} уже в финальном статусе ({order.status.value}) — отменить нельзя"
+        )
+        return
+
+    from app.repositories.user_repo import UserRepo
+    admin = await UserRepo(session).get_by_telegram_id(message.from_user.id)
+    actor_id = admin.id if admin else None
+
+    await order_repo.cancel(order, "admin")
+    await order_repo.add_log(
+        order_id=order_id, actor_id=actor_id, action=OrderLogAction.cancelled,
+        detail="Admin forced cancel",
+    )
+
+    from app.bot.instance import bot
+    client = await UserRepo(session).get_by_id(order.client_id)
+    if client:
+        post_commit.append(bot.send_message(
+            client.telegram_id,
+            f"❌ Заявка №{order_id} была отменена администратором",
+        ))
+
+    if order.operator_id:
+        operator = await UserRepo(session).get_by_id(order.operator_id)
+        if operator:
+            post_commit.append(bot.send_message(
+                operator.telegram_id,
+                f"❌ Заявка №{order_id} была отменена администратором",
+            ))
+
+    await message.answer(f"✅ Заявка №{order_id} отменена")
 
 
 @router.message(Command("addadmin"), IsAdmin())
@@ -342,6 +384,7 @@ async def cmd_commands(message: Message):
         "/endauction {id} — завершить аукцион досрочно\n"
         "/confirmpayment {id} — подтвердить оплату вручную\n"
         "/completeorder {id} — принудительно завершить заявку\n"
+        "/cancelorder {id} — принудительно отменить заявку\n"
         "/commands — этот список"
     )
     await message.answer(text)

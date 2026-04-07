@@ -80,6 +80,18 @@ class OrderRepo:
         )
         return list(result.scalars().all())
 
+    async def get_unconfirmed_payments(self) -> list[Order]:
+        """Orders where payment was received (payment_received_at set) but admin has not
+        confirmed yet (payment_confirmed_at is null). Used for daily reminder to admin."""
+        result = await self.session.execute(
+            select(Order).where(
+                Order.payment_received_at.isnot(None),
+                Order.payment_confirmed_at.is_(None),
+                Order.status == OrderStatus.awaiting_payment,
+            ).order_by(Order.payment_received_at)
+        )
+        return list(result.scalars().all())
+
     async def get_overdue_pending(self) -> list[Order]:
         """Orders in pending status past their auction_end_at (missed scheduler job)."""
         now = datetime.now(timezone.utc)
@@ -192,10 +204,6 @@ class OrderRepo:
         order.payment_received_at = None
         order.payment_confirmed_at = None
         order.updated_at = datetime.now(timezone.utc)
-        await self.session.flush()
-
-    async def set_group_message_id(self, order: Order, message_id: int) -> None:
-        order.group_message_id = message_id
         await self.session.flush()
 
     async def add_log(

@@ -106,8 +106,10 @@ tg-bot_for_avito/
 │       ├── 0003_add_review_rating.py # rating column в reviews
 │       ├── 0004_refactor.py       # order_logs, review status enum, bid unique,
 │       │                          # solution_files.file_type, order lifecycle fields
-│       └── 0005_schema_fixes.py   # bids.amount precision Numeric(12,2),
-│                                  # messages.text NOT NULL
+│       ├── 0005_schema_fixes.py   # bids.amount precision Numeric(12,2),
+│       │                          # messages.text NOT NULL
+│       └── 0006_orderlogaction_new_values.py  # ALTER TYPE orderlogaction ADD VALUE
+│                                              # requisites_sent, dispute_opened
 ├── backup/
 │   ├── Dockerfile                 # python:3.11-slim + postgresql-client (apt)
 │   └── backup.py                  # pg_dump → gzip → Telegram, цикл раз в сутки в 03:00 UTC
@@ -138,7 +140,7 @@ SQLAlchemy хранит **Python-имена enum** (не `.value`). В БД: `pe
 - `payment_confirmed_at` — момент, когда админ нажал `/confirmpayment`
 - `solution_uploaded_at` — момент загрузки решения оператором (авто-завершение после этого)
 - `payment_revision` — счётчик, инкрементируется при изменении цены (старые Robokassa-ссылки инвалидируются)
-- `cancelled_by` — `"client"` / `"operator"` / `"system"` / `"admin"`
+- `cancelled_by` — `"client"` / `"operator"` / `"admin"` / `"system"`
 
 ### Ключевые модели
 
@@ -162,7 +164,7 @@ SQLAlchemy хранит **Python-имена enum** (не `.value`). В БД: `pe
 
 **operator_notes**: `id, order_id FK, operator_id FK, text TEXT, created_at`
 
-**order_logs**: `id, order_id FK, actor_id FK nullable, action ENUM(created/bid_placed/auction_closed/operator_assigned/payment_received/payment_confirmed/completed/cancelled/price_updated/solution_uploaded/comment_added/files_added), detail VARCHAR nullable, created_at`
+**order_logs**: `id, order_id FK, actor_id FK nullable, action ENUM(created/bid_placed/auction_closed/operator_assigned/payment_received/payment_confirmed/price_updated/requisites_sent/solution_uploaded/completed/cancelled/comment_added/files_added/dispute_opened), detail VARCHAR nullable, created_at`
 
 ---
 
@@ -377,6 +379,7 @@ SQLAlchemy хранит **Python-имена enum** (не `.value`). В БД: `pe
 ## Конфиг (`.env`)
 ```
 BOT_TOKEN=
+DOMAIN=yourdomain.com           # без https://, используется Caddy для SSL
 WEBHOOK_BASE_URL=https://yourdomain.com
 WEBHOOK_PATH=/telegram/webhook
 WEBHOOK_SECRET=random_secret_string
@@ -406,8 +409,17 @@ services:
     build: .
     env_file: .env
     depends_on: [db, redis]
-    ports: ["8000:8000"]
+    # Порт 8000 НЕ пробрасывается наружу — только Caddy достаёт через Docker-сеть
+    # Для локальной разработки без Caddy раскомментировать: ports: ["8000:8000"]
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    healthcheck: curl -f http://localhost:8000/health (interval 30s, retries 3)
+  caddy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes: [./Caddyfile:/etc/caddy/Caddyfile, caddy_data:/data, caddy_config:/config]
+    # Caddyfile: одна строка — "{env.DOMAIN} { reverse_proxy bot:8000 }"
+    # SSL-сертификат получается автоматически от Let's Encrypt
+    # DOMAIN= обязательна в .env (без https://)
   backup:
     build: ./backup
     env_file: .env
@@ -541,7 +553,7 @@ docker-compose up -d --build
 
 ---
 
-### Исправленные баги (аудит)
+### Исправленные баги (аудит, сессия 1)
 1. **reviews.py** — `got_review_text` возвращал `client_main_kb()` для всех ролей → добавлена проверка `user.role == UserRole.client`
 2. **client/messaging.py** — `start_client_message` не блокировал cancelled-заявки → добавлена проверка `order.status == OrderStatus.cancelled`
 3. **operator/messaging.py** — `extra_comment` терялся в Robokassa-ветке `counter_offer_done` → добавлен `comment_line` в оба варианта сообщения
@@ -551,3 +563,54 @@ docker-compose up -d --build
 7. **operator/notes.py** — `solution_done` использовал `get_by_id` вместо `get_by_id_for_update` → исправлено
 8. **operator/notes.py**, **operator/messaging.py**, **operator/bid.py** — кнопки карточки во время `SolutionStates.waiting_files` молча сбрасывали FSM → добавлен гард с алертом
 9. **operator/menu.py** — мёртвый обработчик `complete_order` (action="complete") удалён (авто-завершение теперь в `solution_done`)
+
+### Исправленные баги (аудит, сессия 3)
+10. **operator/notes.py** — `solution_comment` матчил `/cancel` как текст (F.text ловит команды) → добавлен фильтр `~F.text.startswith("/")`, команды пролетают в `cmd_cancel`
+11. **operator/messaging.py** — `negot_cancel_order` читал заявку без `SELECT FOR UPDATE` → заменён `get_by_id` на `get_by_id_for_update`; устранён race condition при одновременной отмене клиентом и оператором
+12. **operator/messaging.py** — 5 хендлеров (`send_operator_message`, `send_requisites_done`, `negot_accept`, `counter_offer_done`, `negot_cancel_order`) отправляли уведомления ДО `session.commit()` → добавлен `post_commit: list` в сигнатуры, все `bot.send_message` к третьим лицам перенесены в `post_commit.append(...)`
+13. **admin/commands.py** — отсутствовала команда `/cancelorder {id}` → добавлена; отменяет заявку в любом нефинальном статусе, уведомляет клиента и оператора, пишет лог `"Admin forced cancel"`; добавлена в `/commands`
+
+### Исправленные баги (аудит, сессия 4)
+14. **services/notification_service.py** — удалён мёртвый `NotificationService` (нигде не вызывался, содержал устаревшие тексты без `_money()`)
+15. **client/order_list.py** — `view_solution` не показывал текстовый комментарий оператора → перед файлами отображается последний `Message(direction=operator_to_client)` по заявке
+16. **auction_service.py / order_repo.py** — `group_message_id` сохранялся в БД, но нигде не читался → убраны `set_group_message_id` вызов и метод; поле в модели осталось (без миграции)
+17. **client/order_list.py** — `add_comment_start` и `add_files_start` не проверяли активный FSM → добавлен guard: если уже в `OrderEditStates.waiting_*`, показывается алерт «завершите текущее действие»
+18. **order_inline.py / operator/notes.py** — не было механизма для оператора сообщить о невозможности выполнить заявку → добавлена кнопка «⚠️ Не могу выполнить» в `my_order_card_kb` и обработчик `cant_do_order`: сохраняет `OperatorNote`, уведомляет админа с подсказкой `/cancelorder {id}` и клиента
+
+### Исправленные баги (аудит, сессия 5)
+19. **client/reviews.py** — `start_review` загружал все отзывы клиента для проверки дубля → заменён `get_by_client(user.id)` + Python-фильтр на точечный `get_by_order_client(order.id, user.id)` (один SELECT по PK unique constraint)
+20. **operator/messaging.py** — `start_operator_message` не проверял статус заявки → оператор мог написать клиенту по завершённой/отменённой заявке через устаревшую кнопку; добавлена проверка `status in (completed, cancelled)`
+21. **backup/backup.py** — Telegram-отправка без ретраев; при сбое никто не узнал → добавлены 3 попытки с паузой 30 сек; при полном провале — alert-сообщение через `sendMessage` к `ADMIN_TELEGRAM_ID` (новый env var в backup-контейнере)
+22. **order_repo.py / scheduler/jobs.py / main.py** — уведомление adminа о Robokassa-платеже не было гарантировано → добавлен daily cron-job `remind_unconfirmed_payments` (10:00 UTC): находит заявки с `payment_received_at IS NOT NULL AND payment_confirmed_at IS NULL`, отправляет список с командами `/confirmpayment {id}`
+
+### Исправленные баги (аудит, сессия 6)
+23. **formatters.py** — `format_order_card` показывал ставки конкурентов всем операторам → добавлен параметр `viewer_id: int | None`; оператор видит только свою ставку + счётчик чужих; admin видит все ставки; все call sites в `operator/menu.py` и `auction_service.py` обновлены
+24. **order_inline.py / client/order_list.py** — не было механизма спора → добавлена кнопка «⚠️ Оспорить» в `client_completed_order_kb`; обработчик `client_dispute`: пишет лог `comment_added + detail="Client opened dispute"`, уведомляет admin через `post_commit`
+25. **client/menu.py** — `/start` молча сбрасывал FSM без уведомления → если было активное состояние, показывается «ℹ️ Незавершённое действие отменено» с подсказкой про `/cancel`
+26. **api/payment.py** — stale Robokassa callback (старый InvId после смены цены) возвращал 404, Robokassa бесконечно ретраила → парсим `{order_id}_{revision}` из InvId; если заявка существует с более высоким `payment_revision` — возвращаем `OK{InvId}` чтобы остановить ретраи
+27. **operator/messaging.py** — оператор в `CounterOfferStates.waiting_amount` не знал как выйти → добавлена подсказка «Для отмены — /cancel» в prompt
+
+### Исправленные баги (аудит, сессия 7)
+28. **requirements.txt** — `aiohttp` не был явно указан (неявная зависимость от aiogram) → добавлен `aiohttp>=3.9.0,<4.0.0`
+29. **client/messaging.py** — `send_client_message` использовал прямой `await bot.send_message` до commit → переведён на `post_commit.append()`; добавлен `post_commit: list` в сигнатуру
+30. **client/order_list.py** — `client_negotiate_done` использовал прямой `await bot.send_message` до commit → переведён на `post_commit.append()`; убран try/except-заглушитель
+31. **client/order_create.py** — `start_order` не проверял активный FSM → нажатие «Создать заявку» посреди другого действия молча перебивало состояние; добавлен guard с сообщением
+32. **operator/notes.py** — `solution_done` использовал прямой `await bot.send_message` до commit → переведён на `post_commit.append()`; убран try/except-заглушитель
+33. **admin/commands.py** — `cmd_confirm_payment`, `cmd_complete_order`, `cmd_cancel_order` использовали прямые `await bot.send_message` до commit → все три переведены на `post_commit: list`; убраны try/except-заглушители
+
+### Исправленные баги (аудит, сессия 8)
+34. **client/reviews.py** — `start_review` не проверял статус заявки → клиент мог нажать старую кнопку «⭐ Оставить отзыв» и оставить отзыв на незавершённую заявку; добавлена проверка `order.status == OrderStatus.completed` с алертом
+35. **docker-compose.yml / Caddyfile** — отсутствовал SSL/reverse-proxy → webhook Telegram не мог работать в production; добавлен сервис `caddy` (ports 80/443), `Caddyfile` с одной строкой конфига (автоматический SSL Let's Encrypt); порт `8000:8000` у `bot` закомментирован — доступ только через Caddy; добавлена переменная `DOMAIN` в `.env.example`; добавлен `healthcheck` для сервиса `bot` (curl `/health`)
+36. **operator/messaging.py / keyboards/callbacks.py / keyboards/order_inline.py / client/order_list.py** — race condition в переговорах по цене: клиент отправлял два встречных предложения, оператор мог принять оба, цена менялась дважды; добавлено поле `revision: int = 0` в `NegotCB`; `negot_operator_kb()` принимает `revision` и кодирует его в кнопки Accept/Counter; `client_negotiate_done` передаёт `revision=order.payment_revision`; `negot_accept` и `negot_counter` проверяют `callback_data.revision != order.payment_revision` — устаревший callback инвалидируется с алертом «Это предложение устарело»
+37. **client/order_list.py** — при отмене заявки `awaiting_payment` клиентом оператор получал уведомление только в группу → добавлено прямое DM оператору если `order.operator_id is not None`
+38. **operator/messaging.py / db/models/order_log.py / migrations/0006** — `send_requisites_done` не оставлял записи в журнале заявки → добавлен `OrderLogAction.requisites_sent`; вызов `add_log` перед отправкой реквизитов; новая миграция `0006_orderlogaction_new_values` добавляет `requisites_sent` и `dispute_opened` через `ALTER TYPE ... ADD VALUE IF NOT EXISTS`
+39. **client/order_list.py / db/models/order_log.py** — `client_dispute` логировал действие как `comment_added` → добавлен `OrderLogAction.dispute_opened`; теперь споры можно фильтровать отдельно от комментариев
+40. **bot/routers/errors.py** — при необработанном исключении пользователь не получал никакого ответа и думал что бот завис → добавлен ответ пользователю: `message.answer(...)` или `callback_query.answer(..., show_alert=True)` после уведомления администратора
+41. **client/reviews.py / keyboards/callbacks.py / keyboards/admin_inline.py** — `all_reviews` выводил все отзывы в одно сообщение, при росте числа отзывов упирался в лимит Telegram 4096 символов → добавлена пагинация: `REVIEWS_PAGE_SIZE=5`, поле `page: int = 0` в `ReviewListCB`, хелпер `reviews_pagination_kb()`, заголовок `"⭐ Отзывы (1/3):"`
+42. **client/order_list.py** — `client_negotiate` не проверял активный FSM перед входом в `NegotiationStates.waiting_text` → нажатие кнопки из старого сообщения молча перебивало активный стейт (создание заявки, редактирование); добавлен FSM guard; добавлена подсказка «Для отмены — /cancel» в prompt
+43. **client/messaging.py** — `start_client_message` не проверял активный FSM → аналогично п.42; добавлен FSM guard
+44. **operator/menu.py** — `_pick_kb` возвращал `None` для чужой активной заявки (admin/operator смотрит заявку другого оператора) → заменено на `operator_refresh_only_kb(order.id)`; теперь всегда есть кнопка «🔄 Обновить»
+45. **client/order_list.py** — при добавлении клиентом комментария или файлов уведомлялась только группа операторов → добавлено прямое DM назначенному оператору (если `order.operator_id is not None`) в `add_comment_done` и `add_files_done`
+46. **db/models/order.py** — комментарий к полю `cancelled_by` не включал значение `"operator"` → исправлен; поле `group_message_id` помечено как deprecated (не записывается и не читается приложением)
+47. **api/payment.py** — проверка stale InvId использовала `payment_revision > 0` вместо точного сравнения → исправлено на `cb_revision < stale_order.payment_revision`; добавлена проверка `parts[1].isdigit()`; лог стал информативнее
+48. **services/auction_service.py** — при повторной ставке оператора текст подтверждения всегда был «✅ Ставка принята» → перед upsert проверяется `get_operator_bid`; если ставка уже была — текст «🔄 Ставка обновлена: X ₽»

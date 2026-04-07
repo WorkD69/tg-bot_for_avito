@@ -43,6 +43,9 @@ async def start_operator_message(
     if not order or order.operator_id != user.id:
         await callback.answer("❌ Заявка не найдена или не ваша", show_alert=True)
         return
+    if order.status in (OrderStatus.completed, OrderStatus.cancelled):
+        await callback.answer("⚠️ Заявка уже завершена — переписка недоступна", show_alert=True)
+        return
     # Guard: cannot message yourself
     if order.client_id == user.id:
         await callback.answer("⚠️ Нельзя написать самому себе", show_alert=True)
@@ -55,7 +58,7 @@ async def start_operator_message(
 
 
 @router.message(MessagingStates.waiting_message, F.text, IsOperator())
-async def send_operator_message(message: Message, state: FSMContext, session: AsyncSession, user: User):
+async def send_operator_message(message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list):
     data = await state.get_data()
     order_id: int = data["order_id"]
     client_db_id: int = data["client_id"]
@@ -88,14 +91,11 @@ async def send_operator_message(message: Message, state: FSMContext, session: As
             callback_data=OrderCB(order_id=order_id, action="client_msg").pack(),
         )
     ]])
-    try:
-        await bot.send_message(
-            client.telegram_id,  # correct: telegram_id, not DB id
-            f"💬 Сообщение от оператора по заявке №{order_id}:\n\n{message.text}",
-            reply_markup=reply_btn,
-        )
-    except Exception:
-        logger.warning("Не удалось отправить сообщение клиенту по заявке №%d", order_id, exc_info=True)
+    post_commit.append(bot.send_message(
+        client.telegram_id,
+        f"💬 Сообщение от оператора по заявке №{order_id}:\n\n{message.text}",
+        reply_markup=reply_btn,
+    ))
 
     await message.answer("✅ Сообщение отправлено клиенту")
 
@@ -128,7 +128,7 @@ async def start_send_requisites(
 
 
 @router.message(RequisitesStates.waiting_text, F.text, IsOperator())
-async def send_requisites_done(message: Message, state: FSMContext, session: AsyncSession, user: User):
+async def send_requisites_done(message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list):
     data = await state.get_data()
     order_id: int = data["order_id"]
     await state.clear()
@@ -146,21 +146,25 @@ async def send_requisites_done(message: Message, state: FSMContext, session: Asy
         await message.answer("❌ Клиент не найден")
         return
 
+    from app.db.models.order_log import OrderLogAction
+    await OrderRepo(session).add_log(
+        order_id=order_id,
+        actor_id=user.id,
+        action=OrderLogAction.requisites_sent,
+    )
+
     from app.bot.instance import bot
     from app.bot.keyboards.order_inline import client_awaiting_payment_kb
     from app.bot.formatters import _money
-    try:
-        # Manual payment mode — client confirms via "Я оплатил" button
-        await bot.send_message(
-            client.telegram_id,
-            f"💳 Реквизиты для оплаты заявки №{order_id}\n"
-            f"Сумма: {_money(order.payment_amount)}\n\n"
-            f"{message.text}\n\n"
-            "После оплаты нажмите «Я оплатил»",
-            reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=True),
-        )
-    except Exception:
-        logger.warning("Не удалось отправить реквизиты клиенту по заявке №%d", order_id, exc_info=True)
+    # Manual payment mode — client confirms via "Я оплатил" button
+    post_commit.append(bot.send_message(
+        client.telegram_id,
+        f"💳 Реквизиты для оплаты заявки №{order_id}\n"
+        f"Сумма: {_money(order.payment_amount)}\n\n"
+        f"{message.text}\n\n"
+        "После оплаты нажмите «Я оплатил»",
+        reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=True),
+    ))
 
     await message.answer("✅ Реквизиты отправлены клиенту")
 
@@ -173,6 +177,7 @@ async def negot_accept(
     callback_data: NegotCB,
     session: AsyncSession,
     user: User,
+    post_commit: list,
 ):
     from decimal import Decimal, InvalidOperation
     order_repo = OrderRepo(session)
@@ -182,6 +187,13 @@ async def negot_accept(
         return
     if order.status != OrderStatus.awaiting_payment:
         await callback.answer("⚠️ Заявка уже не ожидает оплаты", show_alert=True)
+        return
+    # Stale callback guard: client may have sent multiple counter-offers.
+    # revision in callback_data was set when this message was sent.
+    # If payment_revision has advanced since then — a newer round already processed.
+    if callback_data.revision != order.payment_revision:
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.answer("⚠️ Это предложение устарело — клиент прислал новое", show_alert=True)
         return
 
     await callback.message.edit_reply_markup(reply_markup=None)
@@ -209,34 +221,31 @@ async def negot_accept(
         # General message accepted (no price change) — just prompt to send requisites
         new_amount_str = None
 
-    # Notify client about the accepted price and next step
+    # Notify client about the accepted price and next step — deferred after commit
     client = await UserRepo(session).get_by_id(order.client_id)
     from app.config import settings
+    from app.bot.instance import bot
+    from app.bot.keyboards.order_inline import client_awaiting_payment_kb
     if client:
-        from app.bot.instance import bot
-        from app.bot.keyboards.order_inline import client_awaiting_payment_kb
-        try:
-            if settings.robokassa_login and proposed_amount:
-                from app.services.payment_service import PaymentService
-                link = PaymentService().generate_link(
-                    invoice_id=order.payment_invoice_id,
-                    amount=order.payment_amount,
-                )
-                await bot.send_message(
-                    client.telegram_id,
-                    f"✅ Оператор принял вашу цену: {new_amount_str}\n"
-                    f"💳 Новая ссылка для оплаты: {link}",
-                    reply_markup=client_awaiting_payment_kb(order.id, show_paid_btn=False),
-                )
-            else:
-                price_line = f"✅ Оператор принял цену: {new_amount_str}\n" if new_amount_str else "✅ Оператор согласен\n"
-                await bot.send_message(
-                    client.telegram_id,
-                    f"{price_line}⏳ Ожидайте — оператор отправит обновлённые реквизиты для оплаты",
-                    reply_markup=client_awaiting_payment_kb(order.id, show_paid_btn=True),
-                )
-        except Exception:
-            logger.warning("Не удалось уведомить клиента о принятии предложения (заявка №%d)", order.id, exc_info=True)
+        if settings.robokassa_login and proposed_amount:
+            from app.services.payment_service import PaymentService
+            link = PaymentService().generate_link(
+                invoice_id=order.payment_invoice_id,
+                amount=order.payment_amount,
+            )
+            post_commit.append(bot.send_message(
+                client.telegram_id,
+                f"✅ Оператор принял вашу цену: {new_amount_str}\n"
+                f"💳 Новая ссылка для оплаты: {link}",
+                reply_markup=client_awaiting_payment_kb(order.id, show_paid_btn=False),
+            ))
+        else:
+            price_line = f"✅ Оператор принял цену: {new_amount_str}\n" if new_amount_str else "✅ Оператор согласен\n"
+            post_commit.append(bot.send_message(
+                client.telegram_id,
+                f"{price_line}⏳ Ожидайте — оператор отправит обновлённые реквизиты для оплаты",
+                reply_markup=client_awaiting_payment_kb(order.id, show_paid_btn=True),
+            ))
 
     from app.bot.keyboards.order_inline import send_requisites_kb
     price_confirm = f" по новой цене {new_amount_str}" if new_amount_str else ""
@@ -255,6 +264,7 @@ async def negot_counter(
     state: FSMContext,
     session: AsyncSession,
     user: User,
+    post_commit: list,
 ):
     order = await OrderRepo(session).get_by_id(callback_data.order_id)
     if not order or order.operator_id != user.id:
@@ -263,19 +273,25 @@ async def negot_counter(
     if order.status != OrderStatus.awaiting_payment:
         await callback.answer("⚠️ Заявка уже не ожидает оплаты", show_alert=True)
         return
+    # Stale callback guard — same as negot_accept
+    if callback_data.revision != order.payment_revision:
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.answer("⚠️ Это предложение устарело — клиент прислал новое", show_alert=True)
+        return
 
     await state.set_state(CounterOfferStates.waiting_amount)
     await state.update_data(order_id=order.id)
     await callback.message.edit_reply_markup(reply_markup=None)
     await callback.message.answer(
         "💰 Введите сумму и при желании пояснение через пробел:\n"
-        "Например: «3700 Минимальная стоимость работы»"
+        "Например: «3700 Минимальная стоимость работы»\n\n"
+        "Для отмены — /cancel"
     )
     await callback.answer()
 
 
 @router.message(CounterOfferStates.waiting_amount, F.text, IsOperator())
-async def counter_offer_done(message: Message, state: FSMContext, session: AsyncSession, user: User):
+async def counter_offer_done(message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list):
     from decimal import Decimal, InvalidOperation
     parts = message.text.strip().split(None, 1)
     try:
@@ -314,32 +330,29 @@ async def counter_offer_done(message: Message, state: FSMContext, session: Async
     from app.config import settings
     from app.bot.formatters import _money
     from app.bot.keyboards.order_inline import client_awaiting_payment_kb, send_requisites_kb
+    from app.bot.instance import bot
     if client:
-        from app.bot.instance import bot
-        try:
-            if settings.robokassa_login:
-                from app.services.payment_service import PaymentService
-                link = PaymentService().generate_link(
-                    invoice_id=order.payment_invoice_id,
-                    amount=order.payment_amount,
-                )
-                comment_line = f"\n💬 {extra_comment}" if extra_comment else ""
-                await bot.send_message(
-                    client.telegram_id,
-                    f"🔄 Оператор обновил сумму по заявке №{order_id}: {_money(amount)}{comment_line}\n"
-                    f"💳 Новая ссылка для оплаты: {link}",
-                    reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=False),
-                )
-            else:
-                comment_line = f"\n💬 {extra_comment}" if extra_comment else ""
-                await bot.send_message(
-                    client.telegram_id,
-                    f"🔄 Оператор предлагает новую сумму по заявке №{order_id}: {_money(amount)}{comment_line}\n"
-                    "⏳ Ожидайте обновлённые реквизиты для оплаты",
-                    reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=True),
-                )
-        except Exception:
-            logger.warning("Не удалось уведомить клиента о встречном предложении (заявка №%d)", order_id, exc_info=True)
+        if settings.robokassa_login:
+            from app.services.payment_service import PaymentService
+            link = PaymentService().generate_link(
+                invoice_id=order.payment_invoice_id,
+                amount=order.payment_amount,
+            )
+            comment_line = f"\n💬 {extra_comment}" if extra_comment else ""
+            post_commit.append(bot.send_message(
+                client.telegram_id,
+                f"🔄 Оператор обновил сумму по заявке №{order_id}: {_money(amount)}{comment_line}\n"
+                f"💳 Новая ссылка для оплаты: {link}",
+                reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=False),
+            ))
+        else:
+            comment_line = f"\n💬 {extra_comment}" if extra_comment else ""
+            post_commit.append(bot.send_message(
+                client.telegram_id,
+                f"🔄 Оператор предлагает новую сумму по заявке №{order_id}: {_money(amount)}{comment_line}\n"
+                "⏳ Ожидайте обновлённые реквизиты для оплаты",
+                reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=True),
+            ))
 
     await message.answer(
         f"✅ Встречное предложение {_money(amount)} по заявке №{order_id} отправлено клиенту\n"
@@ -354,8 +367,10 @@ async def negot_cancel_order(
     callback_data: NegotCB,
     session: AsyncSession,
     user: User,
+    post_commit: list,
 ):
-    order = await OrderRepo(session).get_by_id(callback_data.order_id)
+    order_repo = OrderRepo(session)
+    order = await order_repo.get_by_id_for_update(callback_data.order_id)
     if not order or order.operator_id != user.id:
         await callback.answer("❌ Заявка не найдена или не ваша", show_alert=True)
         return
@@ -363,7 +378,6 @@ async def negot_cancel_order(
         await callback.answer("⚠️ Заявка уже не ожидает оплаты", show_alert=True)
         return
 
-    order_repo = OrderRepo(session)
     await order_repo.cancel(order, "operator")
     from app.db.models.order_log import OrderLogAction
     await order_repo.add_log(
@@ -380,21 +394,15 @@ async def negot_cancel_order(
     from app.bot.keyboards.order_inline import group_new_order_kb
     from app.config import settings as _settings
 
+    # Notifications to other parties — deferred after commit
     client = await UserRepo(session).get_by_id(order.client_id)
     if client:
-        try:
-            await bot.send_message(
-                client.telegram_id,
-                f"❌ К сожалению, заявка №{order.id} отменена оператором",
-            )
-        except Exception:
-            logger.warning("Не удалось уведомить клиента об отмене заявки №%d", order.id, exc_info=True)
-
-    try:
-        await bot.send_message(
-            _settings.operator_group_id,
-            f"❌ Заявка №{order.id} отменена оператором",
-            reply_markup=group_new_order_kb(order.id),
-        )
-    except Exception:
-        logger.warning("Не удалось уведомить группу об отмене заявки №%d", order.id, exc_info=True)
+        post_commit.append(bot.send_message(
+            client.telegram_id,
+            f"❌ К сожалению, заявка №{order.id} отменена оператором",
+        ))
+    post_commit.append(bot.send_message(
+        _settings.operator_group_id,
+        f"❌ Заявка №{order.id} отменена оператором",
+        reply_markup=group_new_order_kb(order.id),
+    ))

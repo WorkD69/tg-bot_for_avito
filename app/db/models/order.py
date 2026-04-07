@@ -49,7 +49,8 @@ class Order(Base, TimestampMixin):
     payment_invoice_id: Mapped[str | None] = mapped_column(
         String(64), unique=True, nullable=True
     )
-    # message_id of the notification card posted to the operator group
+    # Kept for DB schema compatibility — no longer written or read by the application.
+    # Column exists in migrations 0001+; removing it requires a new migration with op.drop_column.
     group_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     # Payment tracking flags (no new statuses — extra fields only)
@@ -57,7 +58,7 @@ class Order(Base, TimestampMixin):
     payment_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     solution_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     payment_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    cancelled_by: Mapped[str | None] = mapped_column(String(16), nullable=True)  # "client" | "admin" | "system"
+    cancelled_by: Mapped[str | None] = mapped_column(String(16), nullable=True)  # "client" | "operator" | "admin" | "system"
 
     client: Mapped["User"] = relationship("User", foreign_keys=[client_id], back_populates="client_orders")
     operator: Mapped["User | None"] = relationship(

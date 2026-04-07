@@ -30,7 +30,13 @@ async def cmd_cancel(message: Message, state: FSMContext, user: User):
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, user: User, state: FSMContext):
+    current = await state.get_state()
     await state.clear()  # clear any active FSM state on /start
+    if current is not None:
+        await message.answer(
+            "ℹ️ Незавершённое действие отменено\n"
+            "Используйте /cancel в любое время чтобы прервать текущее действие"
+        )
     if user.role in (UserRole.operator, UserRole.admin):
         await message.answer(
             f"👋 Привет, {user.full_name}! Ты в режиме оператора\n\n"

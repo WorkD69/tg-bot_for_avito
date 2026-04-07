@@ -9,6 +9,7 @@ import logging
 import os
 import subprocess
 import time
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -87,12 +88,38 @@ def run_backup() -> None:
         data=body,
         headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = resp.read().decode()
-            logger.info("Telegram OK: %s", result[:120])
-    except Exception as exc:
-        logger.error("Failed to send to Telegram: %s", exc)
+    sent = False
+    for attempt in range(1, 4):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                result = resp.read().decode()
+                logger.info("Telegram OK: %s", result[:120])
+            sent = True
+            break
+        except Exception as exc:
+            logger.warning("Telegram send attempt %d/3 failed: %s", attempt, exc)
+            if attempt < 3:
+                time.sleep(30)
+
+    if not sent:
+        logger.error("All 3 Telegram send attempts failed for backup %s", filename)
+        # Send plain text alert to admin via sendMessage
+        admin_token = bot_token
+        admin_chat_id = os.environ.get("ADMIN_TELEGRAM_ID", "")
+        if admin_chat_id:
+            try:
+                alert_data = urllib.parse.urlencode({
+                    "chat_id": admin_chat_id,
+                    "text": f"⚠️ Бэкап создан, но отправка в Telegram не удалась: {filename}",
+                }).encode("utf-8")
+                alert_req = urllib.request.Request(
+                    f"https://api.telegram.org/bot{admin_token}/sendMessage",
+                    data=alert_data,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+                urllib.request.urlopen(alert_req, timeout=15)
+            except Exception as alert_exc:
+                logger.error("Failed to send admin alert: %s", alert_exc)
 
     # ── Cleanup: keep only last 30 days ───────────────────────────────────────
     cutoff = time.time() - 30 * 86400

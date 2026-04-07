@@ -40,4 +40,14 @@ async def handle_unhandled_error(event: ErrorEvent, bot: Bot) -> bool:
     except Exception:
         pass  # If we can't even notify the admin, just swallow
 
+    # Inform the user so they don't think the bot is frozen
+    update = event.update
+    try:
+        if update.message:
+            await update.message.answer("⚠️ Произошла ошибка — попробуйте ещё раз или напишите /start")
+        elif update.callback_query:
+            await update.callback_query.answer("⚠️ Произошла ошибка — попробуйте ещё раз", show_alert=True)
+    except Exception:
+        pass  # Don't let the user-notify attempt mask the original error
+
     return True  # Mark error as handled so aiogram doesn't re-raise

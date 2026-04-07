@@ -52,7 +52,12 @@ def _history_lines(order: Order) -> list[str]:
 
 # ── Operator card (full info with bids + notes) ───────────────────────────────
 
-def format_order_card(order: Order, is_admin: bool = False) -> str:
+def format_order_card(order: Order, is_admin: bool = False, viewer_id: int | None = None) -> str:
+    """Format order card for operators/admins.
+
+    viewer_id — DB user.id of the viewer. If provided and is_admin=False,
+    competitor bid amounts are hidden: operator sees only own bid + count of others.
+    """
     client = order.client
     if is_admin:
         client_name = f"@{client.username}" if client.username else client.full_name
@@ -80,11 +85,23 @@ def format_order_card(order: Order, is_admin: bool = False) -> str:
 
     lines.append("Ставки операторов:")
     if order.bids:
-        for bid in sorted(order.bids, key=lambda b: b.amount):
-            op_name = (
-                f"@{bid.operator.username}" if bid.operator.username else bid.operator.full_name
-            )
-            lines.append(f"  • {op_name}: {_money(bid.amount)}")
+        if is_admin:
+            # Admin sees all bids with amounts and names
+            for bid in sorted(order.bids, key=lambda b: b.amount):
+                op_name = (
+                    f"@{bid.operator.username}" if bid.operator.username else bid.operator.full_name
+                )
+                lines.append(f"  • {op_name}: {_money(bid.amount)}")
+        else:
+            # Operator sees only own bid + count of others (no competitor prices)
+            own = [b for b in order.bids if viewer_id is not None and b.operator_id == viewer_id]
+            other_count = len(order.bids) - len(own)
+            if own:
+                lines.append(f"  Ваша ставка: {_money(own[0].amount)}")
+            if other_count > 0:
+                lines.append(f"  Других ставок: {other_count}")
+            if not own and not other_count:
+                lines.append("  Ставок пока нет")
     else:
         lines.append("  Ставок пока нет")
 

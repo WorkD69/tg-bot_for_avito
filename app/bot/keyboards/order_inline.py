@@ -67,6 +67,12 @@ def my_order_card_kb(order_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="⚠️ Не могу выполнить",
+                    callback_data=OrderCB(order_id=order_id, action="cant_do").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text="🔄 Обновить",
                     callback_data=OrderCB(order_id=order_id, action="refresh").pack(),
                 ),
@@ -172,11 +178,15 @@ def client_awaiting_payment_kb(order_id: int, show_paid_btn: bool = True) -> Inl
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def negot_operator_kb(order_id: int, proposed_amount: str = "") -> InlineKeyboardMarkup:
+def negot_operator_kb(order_id: int, proposed_amount: str = "", revision: int = 0) -> InlineKeyboardMarkup:
     """Operator response to client price negotiation.
 
     proposed_amount: decimal string of client's counter-offer (empty = general message, no price).
     Encoded into the Accept button so the accept handler knows which price to apply officially.
+
+    revision: current payment_revision of the order. Encoded in Accept/Counter buttons.
+    If the order's revision has advanced by the time the operator clicks, the server rejects
+    the stale callback — preventing double price-change from multiple negotiation rounds.
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -184,14 +194,17 @@ def negot_operator_kb(order_id: int, proposed_amount: str = "") -> InlineKeyboar
                 InlineKeyboardButton(
                     text="✅ Принять предложение",
                     callback_data=NegotCB(
-                        order_id=order_id, action="accept", proposed_amount=proposed_amount
+                        order_id=order_id, action="accept",
+                        proposed_amount=proposed_amount, revision=revision,
                     ).pack(),
                 ),
             ],
             [
                 InlineKeyboardButton(
                     text="💬 Встречная сумма",
-                    callback_data=NegotCB(order_id=order_id, action="counter").pack(),
+                    callback_data=NegotCB(
+                        order_id=order_id, action="counter", revision=revision,
+                    ).pack(),
                 ),
                 InlineKeyboardButton(
                     text="❌ Отменить заявку",
@@ -235,6 +248,10 @@ def client_completed_order_kb(order_id: int) -> InlineKeyboardMarkup:
                 InlineKeyboardButton(
                     text="⭐ Оставить отзыв",
                     callback_data=OrderCB(order_id=order_id, action="review").pack(),
+                ),
+                InlineKeyboardButton(
+                    text="⚠️ Оспорить",
+                    callback_data=OrderCB(order_id=order_id, action="dispute").pack(),
                 ),
             ],
             [

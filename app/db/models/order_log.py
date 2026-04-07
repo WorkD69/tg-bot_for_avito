@@ -19,11 +19,13 @@ class OrderLogAction(str, enum.Enum):
     payment_received = "payment_received"
     payment_confirmed = "payment_confirmed"
     price_updated = "price_updated"
+    requisites_sent = "requisites_sent"
     solution_uploaded = "solution_uploaded"
     completed = "completed"
     cancelled = "cancelled"
     comment_added = "comment_added"
     files_added = "files_added"
+    dispute_opened = "dispute_opened"
 
 
 class OrderLog(Base, TimestampMixin):
