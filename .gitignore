@@ -1,5 +1,6 @@
 # Environment — never commit real credentials
 .env
+.env.prod
 
 # Python
 __pycache__/
@@ -10,3 +11,14 @@ venv/
 
 # Docker volumes / local state
 *.log
+
+# Pre-downloaded pip wheels (large binaries — use pip install normally)
+wheels/
+
+# Temp / dev artefacts
+tmp/
+*.db
+
+# OS
+.DS_Store
+Thumbs.db

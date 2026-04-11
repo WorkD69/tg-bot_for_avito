@@ -369,6 +369,11 @@ async def negot_cancel_order(
     user: User,
     post_commit: list,
 ):
+    # Intentionally NO revision check here (unlike negot_accept / negot_counter).
+    # Cancellation is always valid regardless of which negotiation round the button
+    # belongs to — the operator wants out, period. Showing a "stale" alert for a
+    # cancel button would be confusing and could leave the order stuck in a state
+    # where the operator can't exit.
     order_repo = OrderRepo(session)
     order = await order_repo.get_by_id_for_update(callback_data.order_id)
     if not order or order.operator_id != user.id:

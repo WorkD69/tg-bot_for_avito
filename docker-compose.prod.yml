@@ -1,0 +1,28 @@
+# docker-compose.prod.yml — Production overrides
+#
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# What this changes vs base docker-compose.yml:
+#   - bot: removes the exposed port 8000 (Caddy reaches bot via internal Docker network)
+#   - bot: enables Caddy dependency (bot starts only after Caddy is up)
+#
+# Prerequisites:
+#   - DOMAIN= set in .env to your real domain (e.g. example.com)
+#   - DNS A-record for that domain pointing to your VPS IP
+#   - Port 80 and 443 open on VPS
+#   - WEBHOOK_BASE_URL=https://yourdomain.com in .env
+#   - ROBOKASSA_IS_TEST=false and real Robokassa credentials (if using Robokassa)
+
+version: "3.9"
+
+services:
+  bot:
+    ports: !reset []      # Remove dev port exposure — Caddy proxies internally
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      caddy:
+        condition: service_started

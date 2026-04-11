@@ -9,6 +9,39 @@ from app.config import settings
 dp = create_dispatcher()
 
 
+def _validate_config() -> None:
+    """Warn early about obviously wrong or missing config values.
+
+    Does NOT raise — the bot can still run locally with partial config.
+    Warnings appear in logs and (after the log handler is registered) in admin DM.
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    if not settings.bot_token or settings.bot_token == "":
+        log.error("STARTUP: BOT_TOKEN is not set — bot will not work")
+
+    if not settings.admin_telegram_id:
+        log.error("STARTUP: ADMIN_TELEGRAM_ID is not set")
+
+    if settings.webhook_base_url in ("", "https://yourdomain.com"):
+        log.warning("STARTUP: WEBHOOK_BASE_URL looks like a placeholder (%s) — set to ngrok URL or real domain", settings.webhook_base_url)
+
+    if settings.webhook_secret in ("", "random_secret_string", "change_me_to_random_string"):
+        log.warning("STARTUP: WEBHOOK_SECRET is default/empty — use a random secret in production")
+
+    if settings.robokassa_is_test:
+        log.info("STARTUP: Robokassa running in TEST mode — payments are simulated")
+
+    if not settings.robokassa_login:
+        log.info("STARTUP: ROBOKASSA_LOGIN is empty — manual payment mode active ('Ya oplatil' button)")
+
+    # Check BACKUP_CHAT_ID via os.environ (it's not in Settings — backup service reads it directly)
+    import os
+    if not os.environ.get("BACKUP_CHAT_ID"):
+        log.warning("STARTUP: BACKUP_CHAT_ID is not set — daily DB backups will not be sent to Telegram")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ──────────────────────────────────────────────────────────────
@@ -17,6 +50,8 @@ async def lifespan(app: FastAPI):
     from app.utils.telegram_log_handler import TelegramErrorHandler
     tg_handler = TelegramErrorHandler(settings.bot_token, settings.admin_telegram_id)
     logging.getLogger().addHandler(tg_handler)
+
+    _validate_config()
 
     # Set Telegram webhook
     await bot.set_webhook(

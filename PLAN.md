@@ -350,8 +350,9 @@ SQLAlchemy хранит **Python-имена enum** (не `.value`). В БД: `pe
 - `/admins` — список всех администраторов
 - `/stats` — сводка по статусам заявок
 - `/endauction {order_id}` — досрочно завершить аукцион
-- `/confirmpayment {order_id}` — вручную подтвердить оплату → статус `in_progress`
-- `/completeorder {order_id}` — принудительно завершить заявку
+- `/confirmpayment {order_id}` — вручную подтвердить оплату -> статус `in_progress`
+- `/completeorder {order_id}` — принудительно завершить заявку (только in_progress)
+- `/cancelorder {order_id}` — принудительно отменить заявку в любом не-финальном статусе
 - `/commands` — список всех команд
 
 ---
@@ -409,10 +410,9 @@ services:
     build: .
     env_file: .env
     depends_on: [db, redis]
-    # Порт 8000 НЕ пробрасывается наружу — только Caddy достаёт через Docker-сеть
-    # Для локальной разработки без Caddy раскомментировать: ports: ["8000:8000"]
+    # DEV: ports: ["8000:8000"] — для ngrok. PROD: порт закрыт через docker-compose.prod.yml
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
-    healthcheck: curl -f http://localhost:8000/health (interval 30s, retries 3)
+    healthcheck: python3 -c "urllib.request.urlopen('http://localhost:8000/health')" (interval 30s, retries 3, start_period 30s)
   caddy:
     image: caddy:2-alpine
     ports: ["80:80", "443:443", "443:443/udp"]
@@ -426,10 +426,17 @@ services:
     environment: [BACKUP_CHAT_ID]
     depends_on: [db]
     volumes: [backup_data:/backups]
-    # Запускается раз в сутки в 03:00 UTC — pg_dump → gzip → Telegram-группа
+    # Запускается раз в сутки в 03:00 UTC — pg_dump -> gzip -> Telegram-группа
     # Хранит последние 30 дней локально, Telegram хранит вечно
     # Бот должен быть участником BACKUP_CHAT_ID
 ```
+
+**Dev vs Production:**
+- `docker-compose.yml` — базовый (dev): порт 8000 экспонируется наружу (для ngrok)
+- `docker-compose.prod.yml` — production override: порт 8000 закрывается, Caddy проксирует через внутреннюю сеть
+- Запуск production: `docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
+
+**Healthcheck бота:** использует `python3 -c "import urllib.request; ..."` — curl не установлен в python:3.11-slim.
 
 Полный сброс БД (заявки с №1):
 ```bash
