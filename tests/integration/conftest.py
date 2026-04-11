@@ -28,9 +28,14 @@ TEST_DB_URL = os.environ.get(
 )
 
 
-@pytest_asyncio.fixture(scope="module")
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def db_engine():
-    """Create all tables once per test module, drop them at module teardown."""
+    """Create all tables once per test module, drop them at module teardown.
+
+    loop_scope="module" must match the loop scope of dependent fixtures and tests
+    (see pytestmark in each test file) to avoid asyncpg "Future attached to a
+    different loop" RuntimeError in pytest-asyncio >= 0.23.
+    """
     # Import here so env vars from conftest.py root are already set
     from app.db.base import Base
     import app.db.models  # noqa: F401 — registers all models with Base.metadata
@@ -46,7 +51,8 @@ async def db_engine():
         pytest.skip(
             f"Integration DB not available ({TEST_DB_URL}): {exc}\n"
             "Run: docker-compose up -d db && "
-            "docker-compose exec db psql -U postgres -c 'CREATE DATABASE tg_bot_test;'"
+            "docker exec tg-bot_for_avito-db-1 psql -U botuser -d botdb "
+            "-c 'CREATE DATABASE tg_bot_test;'"
         )
         return
 
@@ -57,7 +63,7 @@ async def db_engine():
     await engine.dispose()
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="module")
 async def session(db_engine):
     """Per-test async session backed by a rolled-back transaction.
 

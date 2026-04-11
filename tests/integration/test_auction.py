@@ -15,6 +15,10 @@ from unittest.mock import patch
 
 import pytest
 
+# All async tests in this module share the module-level event loop so they can
+# work with the module-scoped db_engine fixture without asyncpg loop mismatch.
+pytestmark = pytest.mark.asyncio(loop_scope="module")
+
 from app.db.models.order import OrderStatus
 from app.db.models.user import UserRole
 from app.repositories.bid_repo import BidRepo

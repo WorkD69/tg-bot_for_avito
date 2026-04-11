@@ -40,23 +40,26 @@ tests/
 pytest tests/unit/ -v
 ```
 
-Работают без `.env`, без запущенного Docker, без сети. ~2 секунды.
+Работают без `.env`, без запущенного Docker, без сети. ~1 секунда.
 
 ### Все тесты (включая интеграционные)
 
-**Шаг 1** — поднять базу данных:
+В `docker-compose.yml` порт 5432 проброшен на `127.0.0.1:5432` — DB доступна
+с хоста без дополнительных шагов, пока Docker запущен.
+
+**Шаг 1** — убедиться что DB запущена:
 ```bash
 docker-compose up -d db
 ```
 
 **Шаг 2** — создать тестовую БД (один раз):
 ```bash
-docker-compose exec db psql -U postgres -c "CREATE DATABASE tg_bot_test;"
+docker exec tg-bot_for_avito-db-1 psql -U botuser -d botdb -c "CREATE DATABASE tg_bot_test;"
 ```
 
-**Шаг 3** — запустить:
+**Шаг 3** — запустить все тесты:
 ```bash
-pytest tests/ -v
+TEST_DATABASE_URL="postgresql+asyncpg://botuser:botpass@localhost:5432/tg_bot_test" pytest tests/ -v
 ```
 
 Если тестовая БД недоступна, интеграционные тесты **автоматически пропускаются** (skip), юнит-тесты работают всегда.
@@ -65,14 +68,20 @@ pytest tests/ -v
 
 ```bash
 pytest tests/unit/test_payment_service.py -v
-pytest tests/integration/test_auction.py -v
+TEST_DATABASE_URL="postgresql+asyncpg://botuser:botpass@localhost:5432/tg_bot_test" pytest tests/integration/test_auction.py -v
 ```
 
-### С кастомной БД
+### С другими кредами БД
 
 ```bash
-TEST_DATABASE_URL=postgresql+asyncpg://postgres:mypassword@localhost:5432/tg_bot_test pytest tests/ -v
+TEST_DATABASE_URL=postgresql+asyncpg://myuser:mypass@localhost:5432/tg_bot_test pytest tests/ -v
 ```
+
+### Заметка про event loop (pytest-asyncio ≥ 0.23)
+
+Integration tests используют module-scoped DB engine. Тесты помечены
+`pytestmark = pytest.mark.asyncio(loop_scope="module")` — это обязательно,
+иначе asyncpg падает с `RuntimeError: Future attached to a different loop`.
 
 ---
 
