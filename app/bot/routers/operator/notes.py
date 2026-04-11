@@ -160,6 +160,17 @@ async def solution_done(message: Message, state: FSMContext, session: AsyncSessi
         detail="auto-completed after solution upload",
     )
 
+    # Create earning record for payout tracking
+    if order.payment_amount and order.operator_id:
+        from app.config import settings as _settings
+        from app.repositories.earning_repo import EarningRepo
+        await EarningRepo(session).create_for_order(
+            order_id=order_id,
+            operator_id=order.operator_id,
+            gross_amount=order.payment_amount,
+            payout_percent=_settings.operator_payout_percent,
+        )
+
     # Save operator's comment as a message so it appears in client's history card
     if comment:
         await MessageRepo(session).create(

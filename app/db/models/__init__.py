@@ -7,6 +7,7 @@ from app.db.models.review import Review, ReviewStatus
 from app.db.models.message import Message, MessageDirection
 from app.db.models.operator_note import OperatorNote
 from app.db.models.order_log import OrderLog, OrderLogAction
+from app.db.models.operator_earning import OperatorEarning, EarningStatus
 
 __all__ = [
     "User", "UserRole",
@@ -18,4 +19,5 @@ __all__ = [
     "Message", "MessageDirection",
     "OperatorNote",
     "OrderLog", "OrderLogAction",
+    "OperatorEarning", "EarningStatus",
 ]

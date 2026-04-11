@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     operator_group_id: int
     admin_telegram_id: int
 
+    # Payouts
+    operator_payout_percent: float = 80.0  # % of payment_amount the operator receives
+
     # Robokassa
     robokassa_login: str
     robokassa_pass1: str

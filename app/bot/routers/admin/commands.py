@@ -239,6 +239,17 @@ async def cmd_complete_order(message: Message, session: AsyncSession, post_commi
         detail="Admin forced complete",
     )
 
+    # Create earning record for payout tracking
+    if order.payment_amount and order.operator_id:
+        from app.repositories.earning_repo import EarningRepo
+        from app.config import settings as _settings
+        await EarningRepo(session).create_for_order(
+            order_id=order_id,
+            operator_id=order.operator_id,
+            gross_amount=order.payment_amount,
+            payout_percent=_settings.operator_payout_percent,
+        )
+
     from app.bot.instance import bot
     client = await UserRepo(session).get_by_id(order.client_id)
     if client:
@@ -374,17 +385,25 @@ async def cmd_remove_admin(message: Message, session: AsyncSession):
 async def cmd_commands(message: Message):
     text = (
         "📋 Команды администратора:\n\n"
+        "— Управление ролями —\n"
         "/addoperator @username — назначить оператора\n"
         "/deleteoperator @username — снять оператора\n"
         "/addadmin @username — назначить администратора\n"
         "/removeadmin @username — снять администратора\n"
         "/operators — список всех операторов\n"
-        "/admins — список всех администраторов\n"
-        "/stats — статистика заявок\n"
+        "/admins — список всех администраторов\n\n"
+        "— Заявки —\n"
+        "/stats — статистика заявок по статусам\n"
         "/endauction {id} — завершить аукцион досрочно\n"
         "/confirmpayment {id} — подтвердить оплату вручную\n"
         "/completeorder {id} — принудительно завершить заявку\n"
-        "/cancelorder {id} — принудительно отменить заявку\n"
+        "/cancelorder {id} — принудительно отменить заявку\n\n"
+        "— Статистика и выплаты —\n"
+        "/operatorstats [@op] [7d|30d] — статистика оператора\n"
+        "/payouts [@op] — pending выплаты\n"
+        "/markpaid @op [примечание] — отметить выплату как произведённую\n"
+        "/excludeearning {order_id} [причина] — исключить заявку из выплат\n"
+        "/adjustearning {order_id} {сумма} [причина] — скорректировать сумму выплаты\n\n"
         "/commands — этот список"
     )
     await message.answer(text)
