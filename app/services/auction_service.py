@@ -79,15 +79,29 @@ class AuctionService:
         )
 
         from app.scheduler.setup import scheduler
-        scheduler.add_job(
-            _auto_close_auction,
-            "date",
-            run_date=order.auction_end_at,
-            args=[order.id],
-            id=f"auction_{order.id}",
-            replace_existing=True,
-        )
-        logger.info("Auction started for order #%d, ends at %s", order.id, order.auction_end_at)
+        try:
+            scheduler.add_job(
+                _auto_close_auction,
+                "date",
+                run_date=order.auction_end_at,
+                args=[order.id],
+                id=f"auction_{order.id}",
+                replace_existing=True,
+            )
+            logger.info("Auction started for order #%d, ends at %s", order.id, order.auction_end_at)
+        except Exception:
+            # If the jobstore connection is unavailable, log and continue.
+            # The order is already created — recover_overdue_auctions() will close
+            # this auction automatically the next time the bot restarts.
+            # Admin also sees the error via TelegramErrorHandler.
+            logger.error(
+                "start_auction: failed to schedule auction close for order #%d "
+                "(auction_end_at=%s). Will be recovered on next restart. "
+                "Root cause is likely a stale APScheduler jobstore connection — "
+                "check scheduler/setup.py pool_pre_ping setting.",
+                order.id, order.auction_end_at,
+                exc_info=True,
+            )
 
     # ── Place bid ─────────────────────────────────────────────────────────────
 
