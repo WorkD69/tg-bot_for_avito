@@ -4,6 +4,9 @@ from typing import TYPE_CHECKING
 from sqlalchemy import BigInteger, Enum, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+# Known attribution sources — written from /start deeplink payload
+KNOWN_SOURCES = frozenset({"avito", "tg_channel", "direct"})
+
 from app.db.base import Base, TimestampMixin
 
 if TYPE_CHECKING:
@@ -31,6 +34,9 @@ class User(Base, TimestampMixin):
     role: Mapped[UserRole] = mapped_column(
         Enum(UserRole, name="userrole"), nullable=False, default=UserRole.client
     )
+    # Attribution: how the user first arrived. Set once at registration from /start deeplink.
+    # 'avito' | 'tg_channel' | 'direct' | 'unknown'
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
 
     client_orders: Mapped[list["Order"]] = relationship(
         "Order", foreign_keys="Order.client_id", back_populates="client"

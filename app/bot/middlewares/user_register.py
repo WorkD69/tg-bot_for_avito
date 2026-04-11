@@ -5,8 +5,24 @@ from aiogram.types import TelegramObject, Update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.db.models.user import UserRole
+from app.db.models.user import KNOWN_SOURCES, UserRole
 from app.repositories.user_repo import UserRepo
+
+
+def _extract_source(event: "Update") -> str:
+    """Extract attribution source from /start deeplink payload, if any."""
+    if not event.message:
+        return "unknown"
+    text = event.message.text or ""
+    # /start avito  →  payload = "avito"
+    parts = text.strip().split(maxsplit=1)
+    if len(parts) == 2 and parts[0] == "/start":
+        payload = parts[1].strip().lower()
+        if payload in KNOWN_SOURCES:
+            return payload
+        # non-empty but unknown payload → still "direct" (not a deeplink from external)
+        return "direct"
+    return "unknown"
 
 
 class UserRegisterMiddleware(BaseMiddleware):
@@ -37,10 +53,12 @@ class UserRegisterMiddleware(BaseMiddleware):
 
         if user is None:
             full_name = tg_user.full_name or tg_user.first_name or "Unknown"
+            source = _extract_source(event) if isinstance(event, Update) else "unknown"
             user = await repo.create(
                 telegram_id=tg_user.id,
                 full_name=full_name,
                 username=tg_user.username,
+                source=source,
             )
             if is_admin and user.role != UserRole.admin:
                 await repo.set_role(user, UserRole.admin)

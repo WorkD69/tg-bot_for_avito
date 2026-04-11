@@ -23,8 +23,14 @@ class UserRepo:
         )
         return result.scalar_one_or_none()
 
-    async def create(self, telegram_id: int, full_name: str, username: str | None) -> User:
-        user = User(telegram_id=telegram_id, full_name=full_name, username=username)
+    async def create(
+        self,
+        telegram_id: int,
+        full_name: str,
+        username: str | None,
+        source: str = "unknown",
+    ) -> User:
+        user = User(telegram_id=telegram_id, full_name=full_name, username=username, source=source)
         self.session.add(user)
         await self.session.flush()
         return user

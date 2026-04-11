@@ -113,18 +113,6 @@ async def cmd_admins(message: Message, session: AsyncSession):
     await message.answer("\n".join(lines))
 
 
-@router.message(Command("stats"), IsAdmin())
-async def cmd_stats(message: Message, session: AsyncSession):
-    stats = await OrderRepo(session).get_stats()
-    if not stats:
-        await message.answer("📭 Заявок пока нет")
-        return
-
-    lines = ["📊 Статистика заявок:"]
-    for status, count in stats.items():
-        lines.append(f"  {status}: {count}")
-    await message.answer("\n".join(lines))
-
 
 @router.message(Command("endauction"), IsAdmin())
 async def cmd_end_auction(message: Message, session: AsyncSession, post_commit: list):
@@ -398,7 +386,11 @@ async def cmd_commands(message: Message):
         "/confirmpayment {id} — подтвердить оплату вручную\n"
         "/completeorder {id} — принудительно завершить заявку\n"
         "/cancelorder {id} — принудительно отменить заявку\n\n"
-        "— Статистика и выплаты —\n"
+        "— Аналитика —\n"
+        "/stats — бизнес-сводка (заявки + воронка + выплаты)\n"
+        "/funnelstats [7d|30d|today] — воронка с конверсиями по периоду\n"
+        "/sourcestats [7d|30d] — источники пользователей (attribution)\n\n"
+        "— Выплаты операторам —\n"
         "/operatorstats [@op] [7d|30d] — статистика оператора\n"
         "/payouts [@op] — выплаты к обработке (pending + adjusted)\n"
         "/markpaid @op [примечание] — отметить выплату как произведённую\n"
