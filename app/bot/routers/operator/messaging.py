@@ -43,8 +43,8 @@ async def start_operator_message(
     if not order or order.operator_id != user.id:
         await callback.answer("❌ Заявка не найдена или не ваша", show_alert=True)
         return
-    if order.status in (OrderStatus.completed, OrderStatus.cancelled):
-        await callback.answer("⚠️ Заявка уже завершена — переписка недоступна", show_alert=True)
+    if order.status == OrderStatus.cancelled:
+        await callback.answer("⚠️ Заявка отменена — переписка недоступна", show_alert=True)
         return
     # Guard: cannot message yourself
     if order.client_id == user.id:

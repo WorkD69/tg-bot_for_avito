@@ -627,12 +627,6 @@ async def view_solution(
 
     await callback.answer()
 
-    # Show operator's last text comment before files (messages already loaded)
-    from app.db.models.message import MessageDirection
-    op_messages = [m for m in order.messages if m.direction == MessageDirection.operator_to_client]
-    if op_messages:
-        await callback.message.answer(f"💬 Комментарий оператора:\n{op_messages[-1].text}")
-
     await callback.message.answer(f"📎 Решение по заявке №{order.id}:")
     for sf in order.solution_files:
         if sf.file_type == "photo":

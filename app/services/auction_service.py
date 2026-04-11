@@ -238,6 +238,7 @@ class AuctionService:
 
         # Notify client and winner operator
         client = await UserRepo(self.session).get_by_id(order.client_id)
+        from app.bot.keyboards.order_inline import client_awaiting_payment_kb
         if settings.robokassa_login:
             from app.services.payment_service import PaymentService
             payment_url = PaymentService().generate_link(
@@ -250,6 +251,7 @@ class AuctionService:
                     f"✅ Оператор назначен по заявке №{order.id}!\n"
                     f"Сумма к оплате: {min_bid.amount} ₽\n"
                     f"💳 Оплатите по ссылке: {payment_url}",
+                    reply_markup=client_awaiting_payment_kb(order.id, show_paid_btn=False),
                 ))
         else:
             # Manual payment mode — operator sends requisites
@@ -260,6 +262,7 @@ class AuctionService:
                     f"✅ Оператор назначен по заявке №{order.id}!\n"
                     f"Сумма к оплате: {min_bid.amount} ₽\n"
                     "⏳ Ожидайте — оператор скоро отправит реквизиты для оплаты",
+                    reply_markup=client_awaiting_payment_kb(order.id, show_paid_btn=False),
                 ))
             if operator:
                 from app.bot.keyboards.order_inline import send_requisites_kb

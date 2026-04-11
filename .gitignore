@@ -22,3 +22,6 @@ tmp/
 # OS
 .DS_Store
 Thumbs.db
+
+# pip shell redirect artefacts (Windows: pip install "pkg>=x.x" misparses as file redirect)
+=*

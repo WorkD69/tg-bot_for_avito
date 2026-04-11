@@ -112,7 +112,7 @@ def awaiting_payment_operator_kb(order_id: int) -> InlineKeyboardMarkup:
 
 
 def operator_refresh_only_kb(order_id: int) -> InlineKeyboardMarkup:
-    """Operator DM — completed/cancelled card: only refresh button."""
+    """Operator DM — cancelled card: only refresh button."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -121,6 +121,30 @@ def operator_refresh_only_kb(order_id: int) -> InlineKeyboardMarkup:
                     callback_data=OrderCB(order_id=order_id, action="refresh").pack(),
                 ),
             ]
+        ]
+    )
+
+
+def completed_operator_kb(order_id: int) -> InlineKeyboardMarkup:
+    """Operator DM — completed order card: write to client + refresh.
+
+    Completed orders allow post-completion messaging so the operator can respond
+    to client questions submitted via 'Задать вопрос' on their side.
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💬 Написать клиенту",
+                    callback_data=OrderCB(order_id=order_id, action="msg").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔄 Обновить",
+                    callback_data=OrderCB(order_id=order_id, action="refresh").pack(),
+                ),
+            ],
         ]
     )
 

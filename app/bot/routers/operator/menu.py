@@ -1,4 +1,5 @@
 from aiogram import Bot, F, Router
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,6 +9,7 @@ from app.bot.keyboards.callbacks import OrderCB
 from app.bot.keyboards.operator_reply import BTN_DONE, BTN_FREE, BTN_MY
 from app.bot.keyboards.order_inline import (
     awaiting_payment_operator_kb,
+    completed_operator_kb,
     files_view_kb,
     free_order_card_kb,
     my_order_card_kb,
@@ -23,8 +25,10 @@ router = Router()
 
 def _pick_kb(order, viewer_id: int):
     """Pick the right keyboard based on order state and who's viewing."""
-    final = (OrderStatus.completed, OrderStatus.cancelled)
-    if order.status in final:
+    if order.status == OrderStatus.completed:
+        # Completed orders allow post-completion messaging (client may ask follow-ups)
+        return completed_operator_kb(order.id)
+    if order.status == OrderStatus.cancelled:
         return operator_refresh_only_kb(order.id)
     if order.operator_id is None:
         return free_order_card_kb(order.id)
@@ -147,9 +151,23 @@ async def dm_view_order(
 async def back_to_card(
     callback: CallbackQuery,
     callback_data: OrderCB,
+    state: FSMContext,
     session: AsyncSession,
     user: User,
 ):
+    # Delete file messages that were sent when "Файлы" was pressed
+    from app.bot.states.note import FilesViewState
+    current_state = await state.get_state()
+    if current_state == FilesViewState.viewing:
+        data = await state.get_data()
+        chat_id = data.get("files_chat_id") or callback.message.chat.id
+        for msg_id in data.get("file_msg_ids", []):
+            try:
+                await callback.bot.delete_message(chat_id, msg_id)
+            except Exception:
+                pass
+        await state.clear()
+
     order = await OrderRepo(session).get_by_id(callback_data.order_id, load_relations=True)
     if not order:
         await callback.answer("❌ Заявка не найдена", show_alert=True)
@@ -181,8 +199,5 @@ async def refresh_order_card(
     text = format_order_card(order, is_admin=(user.role == UserRole.admin), viewer_id=user.id)
     kb = _pick_kb(order, user.id)
 
-    try:
-        await callback.message.edit_text(text, reply_markup=kb)
-        await callback.answer("✅ Обновлено")
-    except Exception:
-        await callback.answer("✅ Уже актуально")
+    await callback.message.answer(text, reply_markup=kb)
+    await callback.answer("✅ Обновлено")

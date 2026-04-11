@@ -42,3 +42,8 @@ class NegotiationStates(StatesGroup):
 class CounterOfferStates(StatesGroup):
     """Operator makes counter-offer to client."""
     waiting_amount = State()
+
+
+class FilesViewState(StatesGroup):
+    """Operator is viewing order files — tracks sent message IDs for cleanup."""
+    viewing = State()
