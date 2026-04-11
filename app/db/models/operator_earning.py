@@ -14,20 +14,29 @@ if TYPE_CHECKING:
 
 
 class EarningStatus(str, enum.Enum):
-    pending = "pending"      # not yet paid out
+    pending = "pending"      # not yet paid out — safe to include in /payouts
+    on_hold = "on_hold"      # frozen / disputed / requires admin review — NEVER auto-paid
+    adjusted = "adjusted"    # amount manually overridden — payable (share was corrected)
     paid = "paid"            # admin marked as paid
-    excluded = "excluded"    # excluded from payout (dispute / admin decision)
-    adjusted = "adjusted"    # amount manually overridden by admin
+    excluded = "excluded"    # permanently excluded from payout (dispute resolved against op)
+
+
+# Statuses that represent payable earnings (safe to include in /payouts and /markpaid).
+# on_hold is intentionally excluded — must be resolved first.
+# excluded is intentionally excluded — permanently removed.
+PAYABLE_STATUSES: tuple[EarningStatus, ...] = (EarningStatus.pending, EarningStatus.adjusted)
 
 
 class OperatorEarning(Base, TimestampMixin):
     """One row per completed order — tracks what the operator earns and payment status.
 
-    gross_amount  — what the client paid (= order.payment_amount at completion time)
+    gross_amount   — what the client paid (= order.payment_amount at completion time)
     operator_share — what operator receives (gross * payout_percent / 100)
     payout_percent — percent used at calculation time (stored for audit; survives config changes)
-    status        — pending | paid | excluded | adjusted
-    note          — admin comment (reason for exclusion / adjustment / payment note)
+    status         — pending | on_hold | adjusted | paid | excluded
+    note           — admin comment: freeze reason, adjustment reason, payment note
+    frozen_by_id   — who froze this earning (admin user.id); set when status→on_hold
+    frozen_at      — when it was frozen
     """
     __tablename__ = "operator_earnings"
 
@@ -50,8 +59,13 @@ class OperatorEarning(Base, TimestampMixin):
     paid_by_id: Mapped[int | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    frozen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    frozen_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     order: Mapped["Order"] = relationship("Order", foreign_keys=[order_id])
     operator: Mapped["User"] = relationship("User", foreign_keys=[operator_id])
     paid_by: Mapped["User | None"] = relationship("User", foreign_keys=[paid_by_id])
+    frozen_by: Mapped["User | None"] = relationship("User", foreign_keys=[frozen_by_id])

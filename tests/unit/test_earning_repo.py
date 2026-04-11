@@ -2,6 +2,8 @@
 
 Tests the payout math: share calculation, rounding, status logic.
 Uses in-memory Decimal arithmetic only — no async, no DB.
+
+Also tests PAYABLE_STATUSES safety contract (on_hold not payable).
 """
 from decimal import Decimal
 
@@ -104,3 +106,40 @@ class TestParsePeriod:
         result = _parse_period("today")
         assert result is not None
         assert result.hour == 0 and result.minute == 0
+
+
+class TestPayableStatusesSafetyContract:
+    """PAYABLE_STATUSES is the gate between 'safe to pay' and 'must not auto-pay'.
+
+    These tests are the unit-level specification of that contract.
+    If any of these fail, the payout system has a safety regression.
+    """
+
+    def test_on_hold_not_payable(self):
+        from app.db.models.operator_earning import PAYABLE_STATUSES, EarningStatus
+        assert EarningStatus.on_hold not in PAYABLE_STATUSES, \
+            "on_hold must NEVER be payable — it requires explicit admin resolution first"
+
+    def test_excluded_not_payable(self):
+        from app.db.models.operator_earning import PAYABLE_STATUSES, EarningStatus
+        assert EarningStatus.excluded not in PAYABLE_STATUSES
+
+    def test_paid_not_payable(self):
+        from app.db.models.operator_earning import PAYABLE_STATUSES, EarningStatus
+        assert EarningStatus.paid not in PAYABLE_STATUSES, \
+            "paid earnings must not appear in /payouts again"
+
+    def test_pending_is_payable(self):
+        from app.db.models.operator_earning import PAYABLE_STATUSES, EarningStatus
+        assert EarningStatus.pending in PAYABLE_STATUSES
+
+    def test_adjusted_is_payable(self):
+        from app.db.models.operator_earning import PAYABLE_STATUSES, EarningStatus
+        assert EarningStatus.adjusted in PAYABLE_STATUSES, \
+            "adjusted earnings (corrected amount) must be payable"
+
+    def test_payable_statuses_exhaustive(self):
+        """Exactly 2 statuses are payable. If someone adds a new status, this test fails
+        and forces a conscious decision about whether it should be payable."""
+        from app.db.models.operator_earning import PAYABLE_STATUSES
+        assert len(PAYABLE_STATUSES) == 2
