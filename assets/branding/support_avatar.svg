@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bgOrange" cx="40%" cy="35%" r="70%">
+      <stop offset="0%" stop-color="#FF8A5B"/>
+      <stop offset="100%" stop-color="#D94F1A"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background circle — warm orange -->
+  <circle cx="256" cy="256" r="256" fill="url(#bgOrange)"/>
+
+  <!-- Subtle inner ring -->
+  <circle cx="256" cy="256" r="228" fill="none" stroke="#FFFFFF" stroke-width="2" opacity="0.12"/>
+
+  <!-- Speech bubble shape (rounded rectangle + tail) -->
+  <rect x="110" y="148" width="292" height="196" rx="32" ry="32" fill="#FFFFFF"/>
+  <!-- Bubble tail pointing down-left -->
+  <polygon points="160,344 132,400 210,344" fill="#FFFFFF"/>
+
+  <!-- Letter S inside bubble — brand anchor -->
+  <text
+    x="256"
+    y="295"
+    font-family="Arial Black, Arial, Helvetica, sans-serif"
+    font-size="140"
+    font-weight="900"
+    text-anchor="middle"
+    fill="#FF6B35"
+    letter-spacing="-4"
+  >S</text>
+
+  <!-- Small blue dot accent — mirrors bot avatar orange dot -->
+  <circle cx="362" cy="168" r="22" fill="#1B3A6B"/>
+  <circle cx="354" cy="160" r="7" fill="#FFFFFF" opacity="0.4"/>
+</svg>

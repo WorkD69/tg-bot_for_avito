@@ -119,6 +119,14 @@ def format_order_card(order: Order, is_admin: bool = False, viewer_id: int | Non
     return "\n".join(lines)
 
 
+# Status hint shown to client — explains what the current status means in plain language
+_CLIENT_STATUS_HINT: dict[str, str] = {
+    "pending": "👀 Операторы видят заявку и подбирают цену — уведомим как только будет предложение",
+    "awaiting_payment": "💳 Оплатите, чтобы оператор приступил к работе",
+    "in_progress": "🔧 Оператор работает над задачей",
+}
+
+
 # ── Client active order card (no bids, no operator names) ────────────────────
 
 def format_client_card(order: Order) -> str:
@@ -126,22 +134,29 @@ def format_client_card(order: Order) -> str:
     created = _msk(order.created_at)
 
     lines = [
-        f"📌 Заявка №{order.id}",
-        f"Статус: {order.status.value}",
-        f"Дата создания: {created} МСК",
-        f"Дедлайн: {deadline}",
-        f"Желаемый бюджет: {_money(order.budget)}",
+        f"📌 Заявка №{order.id}  ·  {order.status.value}",
+        f"",
+        f"📅 Создана: {created}  ·  Дедлайн: {deadline}",
+        f"💰 Желаемый бюджет: {_money(order.budget)}",
     ]
 
     if order.payment_amount and order.status == OrderStatus.awaiting_payment:
-        lines.append(f"Сумма к оплате: {_money(order.payment_amount)}")
+        lines.append(f"💳 Сумма к оплате: {_money(order.payment_amount)}")
 
     files_count = len(order.files) if order.files else 0
-    lines.append(f"Прикреплённых файлов: {files_count}" if files_count else "Прикреплённых файлов: нет")
+    if files_count:
+        lines.append(f"📎 Файлов прикреплено: {files_count}")
+
+    hint = _CLIENT_STATUS_HINT.get(order.status.name)
+    if hint:
+        lines.append(f"")
+        lines.append(hint)
 
     history = _history_lines(order)
-    lines.append("История взаимодействия:")
-    lines.extend(history) if history else lines.append("  Сообщений пока нет")
+    if history:
+        lines.append("")
+        lines.append("💬 История:")
+        lines.extend(history)
 
     return "\n".join(lines)
 
@@ -154,27 +169,29 @@ def format_client_history_card(order: Order) -> str:
     updated = _msk(order.updated_at)
 
     status_date_label = (
-        "Дата отмены" if order.status == OrderStatus.cancelled else "Дата выполнения"
+        "🚫 Отменена" if order.status == OrderStatus.cancelled else "✅ Выполнена"
     )
 
     lines = [
-        f"📌 Заявка №{order.id}",
-        f"Статус: {order.status.value}",
-        f"Дата создания: {created} МСК",
-        f"{status_date_label}: {updated} МСК",
-        f"Дедлайн: {deadline}",
-        f"Желаемый бюджет: {_money(order.budget)}",
+        f"📌 Заявка №{order.id}  ·  {order.status.value}",
+        f"",
+        f"📅 Создана: {created}  ·  Дедлайн: {deadline}",
+        f"{status_date_label}: {updated}",
+        f"💰 Желаемый бюджет: {_money(order.budget)}",
     ]
 
     if order.payment_amount:
-        lines.append(f"Итоговая сумма: {_money(order.payment_amount)}")
+        lines.append(f"💳 Итоговая сумма: {_money(order.payment_amount)}")
 
     files_count = len(order.files) if order.files else 0
-    lines.append(f"Прикреплённых файлов: {files_count}" if files_count else "Прикреплённых файлов: нет")
+    if files_count:
+        lines.append(f"📎 Файлов прикреплено: {files_count}")
 
     history = _history_lines(order)
-    lines.append("История взаимодействия:")
-    lines.extend(history) if history else lines.append("  Сообщений пока нет")
+    if history:
+        lines.append("")
+        lines.append("💬 История:")
+        lines.extend(history)
 
     return "\n".join(lines)
 

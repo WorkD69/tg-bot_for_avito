@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" width="1200" height="800">
+  <defs>
+    <filter id="cardShadow">
+      <feDropShadow dx="0" dy="4" stdDeviation="12" flood-color="#1B3A6B" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <!-- Background — light -->
+  <rect width="1200" height="800" fill="#F8FAFF"/>
+
+  <!-- Top accent bar -->
+  <rect x="0" y="0" width="1200" height="8" fill="#1B3A6B"/>
+
+  <!-- Header section — dark -->
+  <rect x="0" y="8" width="1200" height="160" fill="#1B3A6B"/>
+
+  <!-- Title -->
+  <text x="600" y="80"
+    font-family="Arial Black, Arial, Helvetica, sans-serif"
+    font-size="42"
+    font-weight="900"
+    text-anchor="middle"
+    fill="#FFFFFF">Какие задачи мы берём?</text>
+
+  <text x="600" y="130"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="24"
+    font-weight="400"
+    text-anchor="middle"
+    fill="#B8CCE8">Школа · Колледж · ВУЗ · Курсы · Сертификации</text>
+
+  <!-- Subject cards grid — 3x2 -->
+
+  <!-- Card 1: Math -->
+  <rect x="60" y="200" width="340" height="160" rx="20" fill="#FFFFFF" filter="url(#cardShadow)"/>
+  <rect x="60" y="200" width="6" height="160" rx="3" fill="#FF6B35"/>
+  <text x="100" y="268" font-family="Arial, Helvetica, sans-serif" font-size="48">📐</text>
+  <text x="162" y="263" font-family="Arial Black, Arial, sans-serif" font-size="26" font-weight="900" fill="#1A1A2E">Математика</text>
+  <text x="162" y="295" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#6B7A99">Алгебра · Матанализ · Геометрия</text>
+  <text x="162" y="338" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#6B7A99">Теорвер · Дискретная</text>
+
+  <!-- Card 2: Physics -->
+  <rect x="430" y="200" width="340" height="160" rx="20" fill="#FFFFFF" filter="url(#cardShadow)"/>
+  <rect x="430" y="200" width="6" height="160" rx="3" fill="#1B3A6B"/>
+  <text x="470" y="268" font-family="Arial, Helvetica, sans-serif" font-size="48">⚡</text>
+  <text x="532" y="263" font-family="Arial Black, Arial, sans-serif" font-size="26" font-weight="900" fill="#1A1A2E">Физика</text>
+  <text x="532" y="295" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#6B7A99">Механика · Электричество</text>
+  <text x="532" y="338" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#6B7A99">Оптика · Квантовая физика</text>
+
+  <!-- Card 3: Programming -->
+  <rect x="800" y="200" width="340" height="160" rx="20" fill="#FFFFFF" filter="url(#cardShadow)"/>
+  <rect x="800" y="200" width="6" height="160" rx="3" fill="#FF6B35"/>
+  <text x="840" y="268" font-family="Arial, Helvetica, sans-serif" font-size="48">💻</text>
+  <text x="902" y="263" font-family="Arial Black, Arial, sans-serif" font-size="26" font-weight="900" fill="#1A1A2E">Программирование</text>
+  <text x="902" y="295" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#6B7A99">Python · C++ · Java · SQL</text>
+  <text x="902" y="338" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#6B7A99">Алгоритмы · Базы данных</text>
+
+  <!-- Card 4: Economics -->
+  <rect x="60" y="390" width="340" height="160" rx="20" fill="#FFFFFF" filter="url(#cardShadow)"/>
+  <rect x="60" y="390" width="6" height="160" rx="3" fill="#1B3A6B"/>
+  <text x="100" y="458" font-family="Arial, Helvetica, sans-serif" font-size="48">📊</text>
+  <text x="162" y="453" font-family="Arial Black, Arial, sans-serif" font-size="26" font-weight="900" fill="#1A1A2E">Экономика</text>
+  <text x="162" y="485" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#6B7A99">Микро · Макро · Статистика</text>
+  <text x="162" y="528" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#6B7A99">Эконометрика · Финансы</text>
+
+  <!-- Card 5: Chemistry -->
+  <rect x="430" y="390" width="340" height="160" rx="20" fill="#FFFFFF" filter="url(#cardShadow)"/>
+  <rect x="430" y="390" width="6" height="160" rx="3" fill="#FF6B35"/>
+  <text x="470" y="458" font-family="Arial, Helvetica, sans-serif" font-size="48">🧪</text>
+  <text x="532" y="453" font-family="Arial Black, Arial, sans-serif" font-size="26" font-weight="900" fill="#1A1A2E">Химия</text>
+  <text x="532" y="485" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#6B7A99">Органическая · Неорганическая</text>
+  <text x="532" y="528" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#6B7A99">Аналитическая · Физхимия</text>
+
+  <!-- Card 6: Other -->
+  <rect x="800" y="390" width="340" height="160" rx="20" fill="#1B3A6B" filter="url(#cardShadow)"/>
+  <text x="840" y="458" font-family="Arial, Helvetica, sans-serif" font-size="48">➕</text>
+  <text x="902" y="453" font-family="Arial Black, Arial, sans-serif" font-size="26" font-weight="900" fill="#FFFFFF">И многое</text>
+  <text x="902" y="487" font-family="Arial Black, Arial, sans-serif" font-size="26" font-weight="900" fill="#FF6B35">другое</text>
+  <text x="902" y="528" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#B8CCE8">Спросите — разберёмся</text>
+
+  <!-- Bottom footer -->
+  <rect x="0" y="590" width="1200" height="210" fill="#1B3A6B"/>
+
+  <text x="600" y="660"
+    font-family="Arial Black, Arial, Helvetica, sans-serif"
+    font-size="36"
+    font-weight="900"
+    text-anchor="middle"
+    fill="#FFFFFF">Не нашли свой предмет?</text>
+
+  <text x="600" y="710"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="26"
+    text-anchor="middle"
+    fill="#B8CCE8">Напишите в Telegram — обсудим вашу задачу</text>
+
+  <text x="1140" y="780"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="24"
+    font-weight="900"
+    text-anchor="end"
+    fill="#FFFFFF"
+    opacity="0.6">Studario</text>
+</svg>

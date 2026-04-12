@@ -214,8 +214,9 @@ async def files_unexpected_type(message: Message):
 async def _ask_comment(message: Message, state: FSMContext):
     await state.set_state(OrderCreateStates.waiting_comment)
     await message.answer(
-        "💬 Добавьте комментарий к заданию\n"
-        f"Максимум {MAX_COMMENT_LEN} символов\n"
+        "💬 Добавьте комментарий к заданию\n\n"
+        "Напишите что важно знать оператору: особые требования, формат ответа, "
+        "с какого места непонятно — всё это поможет получить точный результат\n\n"
         "Если комментария нет — отправьте «-»\n"
         "Для отмены — /cancel"
     )
@@ -293,7 +294,8 @@ async def got_deadline(message: Message, state: FSMContext):
     await state.set_state(OrderCreateStates.waiting_budget)
     await message.answer(
         "💰 Укажите желаемый бюджет в рублях\n"
-        "Например: 1500 или 2000\n"
+        "Например: 1500 или 2000\n\n"
+        "Это ваша стартовая сумма — операторы могут предложить меньше\n"
         "Для отмены — /cancel"
     )
 

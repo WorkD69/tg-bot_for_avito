@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" width="1200" height="800">
+  <defs>
+    <filter id="reviewShadow">
+      <feDropShadow dx="0" dy="6" stdDeviation="14" flood-color="#1B3A6B" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="800" fill="#F8FAFF"/>
+  <rect x="0" y="0" width="1200" height="8" fill="#1B3A6B"/>
+
+  <!-- Header dark bar -->
+  <rect x="0" y="8" width="1200" height="150" fill="#1B3A6B"/>
+
+  <text x="600" y="72"
+    font-family="Arial Black, Arial, Helvetica, sans-serif"
+    font-size="44"
+    font-weight="900"
+    text-anchor="middle"
+    fill="#FFFFFF">Что говорят наши клиенты</text>
+
+  <!-- Stars row -->
+  <text x="600" y="130"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="32"
+    text-anchor="middle"
+    fill="#FF6B35">⭐⭐⭐⭐⭐</text>
+
+  <!-- Review card 1 -->
+  <rect x="40" y="200" width="360" height="240" rx="20" fill="#FFFFFF" filter="url(#reviewShadow)"/>
+  <rect x="40" y="200" width="360" height="6" rx="3" fill="#FF6B35"/>
+
+  <text x="220" y="262" font-family="Arial, Helvetica, sans-serif" font-size="28" text-anchor="middle">⭐⭐⭐⭐⭐</text>
+
+  <text x="60" y="310"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="19"
+    fill="#1A1A2E">«Сдала сессию с первого раза.</text>
+  <text x="60" y="338"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="19"
+    fill="#1A1A2E">Объяснили каждый шаг —</text>
+  <text x="60" y="366"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="19"
+    fill="#1A1A2E">не просто дали ответ»</text>
+
+  <rect x="40" y="395" width="360" height="1" fill="#E8F0FE"/>
+
+  <text x="60" y="425"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="17"
+    fill="#6B7A99">Анастасия, высшая математика</text>
+
+  <!-- Review card 2 -->
+  <rect x="420" y="200" width="360" height="240" rx="20" fill="#FFFFFF" filter="url(#reviewShadow)"/>
+  <rect x="420" y="200" width="360" height="6" rx="3" fill="#1B3A6B"/>
+
+  <text x="600" y="262" font-family="Arial, Helvetica, sans-serif" font-size="28" text-anchor="middle">⭐⭐⭐⭐⭐</text>
+
+  <text x="440" y="310"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="19"
+    fill="#1A1A2E">«Задача по программированию</text>
+  <text x="440" y="338"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="19"
+    fill="#1A1A2E">за 3 часа. Всё работает,</text>
+  <text x="440" y="366"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="19"
+    fill="#1A1A2E">преподаватель принял»</text>
+
+  <rect x="420" y="395" width="360" height="1" fill="#E8F0FE"/>
+
+  <text x="440" y="425"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="17"
+    fill="#6B7A99">Михаил, алгоритмы и структуры данных</text>
+
+  <!-- Review card 3 -->
+  <rect x="800" y="200" width="360" height="240" rx="20" fill="#FFFFFF" filter="url(#reviewShadow)"/>
+  <rect x="800" y="200" width="360" height="6" rx="3" fill="#FF6B35"/>
+
+  <text x="980" y="262" font-family="Arial, Helvetica, sans-serif" font-size="28" text-anchor="middle">⭐⭐⭐⭐⭐</text>
+
+  <text x="820" y="310"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="19"
+    fill="#1A1A2E">«Цена справедливая, никто</text>
+  <text x="820" y="338"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="19"
+    fill="#1A1A2E">не накручивает. Оператор</text>
+  <text x="820" y="366"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="19"
+    fill="#1A1A2E">ответил за 20 минут»</text>
+
+  <rect x="800" y="395" width="360" height="1" fill="#E8F0FE"/>
+
+  <text x="820" y="425"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="17"
+    fill="#6B7A99">Дмитрий, физика (термодинамика)</text>
+
+  <!-- Bottom CTA section -->
+  <rect x="0" y="490" width="1200" height="310" fill="#1B3A6B"/>
+
+  <!-- Large decorative S -->
+  <text x="980" y="760"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="360"
+    font-weight="900"
+    text-anchor="middle"
+    fill="#FFFFFF"
+    opacity="0.04">S</text>
+
+  <text x="600" y="568"
+    font-family="Arial Black, Arial, Helvetica, sans-serif"
+    font-size="40"
+    font-weight="900"
+    text-anchor="middle"
+    fill="#FFFFFF">Присоединяйтесь к ним</text>
+
+  <text x="600" y="630"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="26"
+    text-anchor="middle"
+    fill="#B8CCE8">Отправьте задачу — ответим в течение нескольких минут</text>
+
+  <!-- CTA button -->
+  <rect x="380" y="665" width="440" height="72" rx="36" fill="#FF6B35"/>
+  <text x="600" y="710"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="28"
+    font-weight="900"
+    text-anchor="middle"
+    fill="#FFFFFF">Отправить задание →</text>
+
+  <text x="600" y="762"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="20"
+    text-anchor="middle"
+    fill="#6B7A99">Через Telegram-бот Studario</text>
+
+  <text x="1140" y="785"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="22"
+    font-weight="900"
+    text-anchor="end"
+    fill="#FFFFFF"
+    opacity="0.4">Studario</text>
+</svg>

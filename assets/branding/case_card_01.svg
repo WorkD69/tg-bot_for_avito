@@ -1,0 +1,155 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080" width="1080" height="1080">
+  <defs>
+    <filter id="cardShadow1">
+      <feDropShadow dx="0" dy="8" stdDeviation="20" flood-color="#1B3A6B" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1080" height="1080" fill="#F8FAFF"/>
+
+  <!-- Top accent band -->
+  <rect x="0" y="0" width="1080" height="10" fill="#1B3A6B"/>
+
+  <!-- Header -->
+  <rect x="0" y="10" width="1080" height="180" fill="#1B3A6B"/>
+
+  <text x="60" y="85"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="22"
+    fill="#B8CCE8"
+    letter-spacing="3">КЕЙС STUDARIO</text>
+
+  <text x="60" y="155"
+    font-family="Arial Black, Arial, Helvetica, sans-serif"
+    font-size="50"
+    font-weight="900"
+    fill="#FFFFFF">Высшая математика</text>
+
+  <!-- Category badge -->
+  <rect x="740" y="50" width="280" height="44" rx="22" fill="#FF6B35"/>
+  <text x="880" y="78"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="20"
+    font-weight="900"
+    text-anchor="middle"
+    fill="#FFFFFF">📐 Матанализ</text>
+
+  <!-- Task description block -->
+  <rect x="40" y="230" width="1000" height="200" rx="20" fill="#FFFFFF" filter="url(#cardShadow1)"/>
+  <rect x="40" y="230" width="6" height="200" rx="3" fill="#1B3A6B"/>
+
+  <text x="80" y="278"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="24"
+    font-weight="900"
+    fill="#1A1A2E">Задача клиента</text>
+
+  <text x="80" y="318"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="22"
+    fill="#1A1A2E">Нашли интеграл ∫(x² + 3x − 5) dx, вычислили площадь</text>
+
+  <text x="80" y="350"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="22"
+    fill="#1A1A2E">криволинейной трапеции. Требовалось полное решение</text>
+
+  <text x="80" y="382"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="22"
+    fill="#1A1A2E">с пошаговыми пояснениями для преподавателя</text>
+
+  <!-- Complexity and time block -->
+  <rect x="40" y="460" width="480" height="150" rx="20" fill="#FFFFFF" filter="url(#cardShadow1)"/>
+  <text x="60" y="510"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="22"
+    font-weight="900"
+    fill="#6B7A99">СЛОЖНОСТЬ</text>
+
+  <text x="60" y="555"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="34"
+    font-weight="900"
+    fill="#1A1A2E">Средняя</text>
+
+  <!-- Difficulty bars -->
+  <rect x="60" y="575" width="80" height="14" rx="7" fill="#FF6B35"/>
+  <rect x="152" y="575" width="80" height="14" rx="7" fill="#FF6B35"/>
+  <rect x="244" y="575" width="80" height="14" rx="7" fill="#FF6B35"/>
+  <rect x="336" y="575" width="80" height="14" rx="7" fill="#E8F0FE"/>
+  <rect x="428" y="575" width="80" height="14" rx="7" fill="#E8F0FE"/>
+
+  <!-- Turnaround block -->
+  <rect x="560" y="460" width="480" height="150" rx="20" fill="#FFFFFF" filter="url(#cardShadow1)"/>
+  <text x="580" y="510"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="22"
+    font-weight="900"
+    fill="#6B7A99">ВРЕМЯ ВЫПОЛНЕНИЯ</text>
+
+  <text x="580" y="555"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="34"
+    font-weight="900"
+    fill="#1A1A2E">~3 часа</text>
+
+  <text x="580" y="592"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="20"
+    fill="#6B7A99">С момента подтверждения оплаты</text>
+
+  <!-- Result block -->
+  <rect x="40" y="640" width="1000" height="220" rx="20" fill="#1B3A6B" filter="url(#cardShadow1)"/>
+
+  <text x="80" y="694"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="24"
+    font-weight="900"
+    fill="#B8CCE8">РЕЗУЛЬТАТ</text>
+
+  <text x="80" y="738"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="32"
+    font-weight="900"
+    fill="#FFFFFF">✓  Полное решение с шагами</text>
+
+  <text x="80" y="782"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="24"
+    fill="#B8CCE8">✓  Пояснения для каждого интеграла</text>
+
+  <text x="80" y="822"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="24"
+    fill="#B8CCE8">✓  Преподаватель принял без замечаний</text>
+
+  <!-- Footer -->
+  <rect x="0" y="900" width="1080" height="180" fill="#F0F4FF"/>
+  <rect x="0" y="900" width="1080" height="3" fill="#E8F0FE"/>
+
+  <text x="60" y="962"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="22"
+    fill="#6B7A99">Персональные данные клиента скрыты · Содержание задачи обобщено</text>
+
+  <text x="60" y="1010"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="30"
+    font-weight="900"
+    fill="#1B3A6B">Studario</text>
+
+  <text x="60" y="1050"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="22"
+    fill="#6B7A99">Telegram-бот для решения учебных задач</text>
+
+  <circle cx="980" cy="960" r="60" fill="#FF6B35" opacity="0.15"/>
+  <text x="980" y="978"
+    font-family="Arial Black, Arial, sans-serif"
+    font-size="46"
+    font-weight="900"
+    text-anchor="middle"
+    fill="#FF6B35">S</text>
+</svg>
