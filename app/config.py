@@ -21,7 +21,8 @@ class Settings(BaseSettings):
     admin_telegram_id: int
 
     # Payouts
-    operator_payout_percent: float = 80.0  # % of payment_amount the operator receives
+    operator_payout_percent: float = 70.0  # % of payment_amount a regular operator receives
+    admin_payout_percent: float = 100.0    # % when an admin completes the order themselves
 
     # Robokassa
     robokassa_login: str

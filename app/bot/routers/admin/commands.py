@@ -163,12 +163,23 @@ async def cmd_confirm_payment(message: Message, session: AsyncSession, post_comm
         await message.answer(f"⚠️ Заявка №{order_id} не ожидает оплаты (статус: {order.status.value})")
         return
 
-    if not order.payment_received_at:
+    # In manual payment mode (ROBOKASSA_LOGIN empty) admin sees the money arrive directly
+    # and can confirm without waiting for the client to press "Я оплатил".
+    # In Robokassa mode the payment_received_at is set automatically by the callback,
+    # so the guard is not needed there either — but we keep a soft warning for clarity.
+    from app.config import settings as _settings
+    if not order.payment_received_at and _settings.robokassa_login:
         await message.answer(
             f"⚠️ Заявка №{order_id}: оплата ещё не зафиксирована\n"
-            "Дождитесь, пока клиент нажмёт «Я оплатил» или придёт callback от Robokassa"
+            "Дождитесь callback от Robokassa или попросите клиента нажать «Я оплатил»"
         )
         return
+
+    # If payment_received_at not set yet (manual mode) — stamp it now on behalf of admin
+    if not order.payment_received_at:
+        from datetime import datetime, timezone
+        order.payment_received_at = datetime.now(timezone.utc)
+        await session.flush()
 
     await order_repo.confirm_payment(order)
 
