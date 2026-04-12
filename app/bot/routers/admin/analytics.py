@@ -127,6 +127,12 @@ async def cmd_stats(message: Message, session: AsyncSession):
         parts = [f"{cancel_by.get(k, k)}: {v}" for k, v in summary["cancellations"].items()]
         lines.append(f"❌ Отмены по инициатору: {', '.join(parts)}")
 
+    # Growth: follow-up stats
+    followups = summary.get("followups_sent", 0)
+    if followups or True:  # always show so admin knows the feature is active
+        lines.append("")
+        lines.append(f"📬 Follow-up отправлено: {followups} заявок")
+
     await message.answer("\n".join(lines))
 
 

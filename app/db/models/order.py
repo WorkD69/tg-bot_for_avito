@@ -59,6 +59,9 @@ class Order(Base, TimestampMixin):
     solution_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     payment_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     cancelled_by: Mapped[str | None] = mapped_column(String(16), nullable=True)  # "client" | "operator" | "admin" | "system"
+    # Growth: set when follow-up message is sent to client after completion (24h delay).
+    # Acts as idempotency guard — NULL = not yet sent, non-NULL = sent (no retry).
+    followup_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     client: Mapped["User"] = relationship("User", foreign_keys=[client_id], back_populates="client_orders")
     operator: Mapped["User | None"] = relationship(

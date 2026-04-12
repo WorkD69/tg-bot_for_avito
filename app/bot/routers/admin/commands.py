@@ -246,6 +246,10 @@ async def cmd_complete_order(message: Message, session: AsyncSession, post_commi
             f"🎉 Заявка №{order_id} выполнена!\n📂 Посмотрите в разделе «История заявок»",
         ))
 
+    # Schedule follow-up message to client 24h after completion
+    from app.scheduler.jobs import schedule_followup_job
+    schedule_followup_job(order_id)
+
     await message.answer(f"✅ Заявка №{order_id} завершена")
 
 

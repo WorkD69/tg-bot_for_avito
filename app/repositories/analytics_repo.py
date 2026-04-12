@@ -272,6 +272,12 @@ class AnalyticsRepo:
         cancel_rows = (await self.session.execute(q_cancel)).all()
         cancellations = {(r.cancelled_by or "unknown"): r.cnt for r in cancel_rows}
 
+        # Follow-up growth stats: how many follow-up messages have been sent
+        q_followups = select(func.count(Order.id)).where(Order.followup_sent_at.isnot(None))
+        if since:
+            q_followups = q_followups.where(Order.followup_sent_at >= since)
+        followups_sent = (await self.session.execute(q_followups)).scalar_one()
+
         return {
             "orders_by_status": orders_by_status,
             "total_gross": total_gross,
@@ -280,4 +286,5 @@ class AnalyticsRepo:
             "on_hold_count": on_hold_count,
             "on_hold_sum": on_hold_sum,
             "cancellations": cancellations,
+            "followups_sent": followups_sent,
         }

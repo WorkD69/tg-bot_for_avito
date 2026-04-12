@@ -84,6 +84,7 @@ class UserRegisterMiddleware(BaseMiddleware):
         user = await repo.get_by_telegram_id(tg_user.id)
 
         is_admin = tg_user.id == settings.admin_telegram_id
+        is_new_user = user is None
 
         if user is None:
             full_name = tg_user.full_name or tg_user.first_name or "Unknown"
@@ -117,4 +118,5 @@ class UserRegisterMiddleware(BaseMiddleware):
                 await session.flush()
 
         data["user"] = user
+        data["is_new_user"] = is_new_user
         return await handler(event, data)

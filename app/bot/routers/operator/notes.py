@@ -191,6 +191,10 @@ async def solution_done(message: Message, state: FSMContext, session: AsyncSessi
             "📂 Посмотрите в разделе «История заявок»",
         ))
 
+    # Schedule follow-up message to client 24h after completion
+    from app.scheduler.jobs import schedule_followup_job
+    schedule_followup_job(order_id)
+
     await message.answer(f"✅ Решение по заявке №{order_id} отправлено клиенту — заявка завершена")
 
 
