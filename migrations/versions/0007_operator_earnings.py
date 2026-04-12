@@ -6,6 +6,7 @@ Create Date: 2026-04-11 00:00:00.000000
 """
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 
 revision = "0007_operator_earnings"
 down_revision = "0006_orderlogaction_new_values"
@@ -14,10 +15,14 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Create earningstatus enum first (PostgreSQL requires explicit type creation)
-    op.execute(
-        "CREATE TYPE earningstatus AS ENUM ('pending', 'paid', 'excluded', 'adjusted')"
-    )
+    # Create earningstatus enum — idempotent (safe to re-run if migration was interrupted)
+    op.execute("""
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'earningstatus') THEN
+                CREATE TYPE earningstatus AS ENUM ('pending', 'paid', 'excluded', 'adjusted');
+            END IF;
+        END $$;
+    """)
 
     op.create_table(
         "operator_earnings",
@@ -42,7 +47,7 @@ def upgrade() -> None:
         sa.Column("payout_percent", sa.Numeric(5, 2), nullable=False),
         sa.Column(
             "status",
-            sa.Enum("pending", "paid", "excluded", "adjusted", name="earningstatus", create_type=False),
+            PgEnum("pending", "paid", "excluded", "adjusted", name="earningstatus", create_type=False),
             nullable=False,
             server_default="pending",
         ),

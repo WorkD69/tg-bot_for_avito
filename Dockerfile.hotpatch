@@ -1,0 +1,13 @@
+# Hotpatch Dockerfile — reuses existing tg-bot_for_avito-bot image (all packages already installed)
+# Use when pip/PyPI network is broken and full rebuild is not possible.
+# Build: docker build -f Dockerfile.hotpatch -t tg-bot_for_avito-bot .
+FROM tg-bot_for_avito-bot:latest
+
+WORKDIR /app
+
+# Only copy updated source code — no pip install needed
+COPY . .
+
+EXPOSE 8000
+
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
