@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     robokassa_pass2: str
     robokassa_is_test: bool = True
 
+    # Marketing
+    # URL of your Avito profile/listing — used to nudge avito-source clients to leave a review
+    # on Avito after submitting an internal review. Leave empty to disable the nudge.
+    avito_profile_url: str = ""
+
     @property
     def webhook_full_url(self) -> str:
         return f"{self.webhook_base_url}{self.webhook_path}"

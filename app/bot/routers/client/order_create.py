@@ -3,10 +3,11 @@ from decimal import Decimal, InvalidOperation
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.filters import IsClient
+from app.bot.keyboards.callbacks import OrderCB
 from app.bot.keyboards.client_reply import BTN_CREATE, client_main_kb
 from app.bot.states.order_create import OrderCreateStates
 from app.db.models.user import User
@@ -127,6 +128,40 @@ async def start_order(message: Message, state: FSMContext, session: AsyncSession
         "Когда закончите — отправьте /done\n"
         "Для отмены — /cancel"
     )
+
+
+# ── "Создать ещё заявку" from completed order card ───────────────────────────
+
+@router.callback_query(OrderCB.filter(F.action == "new_order"), IsClient())
+async def new_order_from_card(
+    callback: CallbackQuery,
+    state: FSMContext,
+    session: AsyncSession,
+    user: User,
+):
+    """Inline button on completed order card — starts a new order FSM."""
+    current = await state.get_state()
+    if current is not None:
+        await callback.answer(
+            "⚠️ Вы уже выполняете другое действие — завершите его или отмените через /cancel",
+            show_alert=True,
+        )
+        return
+    active_orders = await OrderRepo(session).get_client_active_orders(user.id)
+    if len(active_orders) >= 5:
+        await callback.answer(
+            "❌ У вас уже 5 активных заявок — дождитесь завершения одной из них",
+            show_alert=True,
+        )
+        return
+    await state.set_state(OrderCreateStates.waiting_files)
+    await state.update_data(files=[])
+    await callback.message.answer(
+        "📎 Отправьте файлы с заданием (до 10 штук)\n"
+        "Когда закончите — отправьте /done\n"
+        "Для отмены — /cancel"
+    )
+    await callback.answer()
 
 
 # ── Step 1: files ─────────────────────────────────────────────────────────────
@@ -340,8 +375,10 @@ async def got_budget(
     await auction.start_auction(order)
 
     await message.answer(
-        "🎉 Ваша заявка создана! Ожидайте, пока операторы возьмут её в работу\n\n"
-        "📋 Статус заявки вы можете посмотреть в разделе «Текущие заявки»",
+        "🎉 Заявка принята!\n\n"
+        "👀 Операторы уже видят её и подбирают цену — как только кто-то откликнется, "
+        "вы сразу получите уведомление\n\n"
+        "📋 Текущий статус — в разделе «Текущие заявки»",
         reply_markup=client_main_kb(),
     )
 

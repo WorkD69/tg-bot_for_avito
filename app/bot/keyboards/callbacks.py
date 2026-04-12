@@ -32,6 +32,7 @@ class OrderCB(CallbackData, prefix="order"):
     #   complete        — admin/operator marks order complete
     #   refresh         — operator refreshes order card in-place (edit_message_text)
     #   client_refresh  — client refreshes order card in-place (edit_message_text)
+    #   new_order       — start new order FSM from completed order card (client)
 
 
 class ReviewCB(CallbackData, prefix="review"):

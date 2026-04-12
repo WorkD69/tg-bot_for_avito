@@ -1,10 +1,11 @@
-from aiogram import Router
+from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from app.bot.keyboards.client_reply import BTN_CREATE, client_main_kb
+from app.bot.keyboards.client_reply import BTN_CREATE, BTN_HOW, client_main_kb
 from app.bot.keyboards.operator_reply import operator_dm_kb
+from app.bot.filters import IsClient
 from app.bot.middlewares.user_register import _parse_start_payload
 from app.db.models.user import User, UserRole
 
@@ -63,6 +64,23 @@ def _main_kb(user: User):
     if user.role in (UserRole.operator, UserRole.admin):
         return operator_dm_kb()
     return client_main_kb()
+
+
+_HOW_IT_WORKS_TEXT = (
+    "ℹ️ Как мы работаем:\n\n"
+    "1️⃣ Вы создаёте заявку — описание задачи, дедлайн, желаемый бюджет\n"
+    "2️⃣ Операторы делают ставки — вы получаете лучшую цену\n"
+    "3️⃣ Вы оплачиваете удобным способом\n"
+    "4️⃣ Оператор берёт задачу в работу\n"
+    "5️⃣ Готовое решение приходит прямо сюда\n\n"
+    "💬 Есть вопросы по результату — напишите оператору прямо в чате заявки\n"
+    "⚠️ Не устраивает результат — нажмите «Оспорить», разберёмся"
+)
+
+
+@router.message(F.text == BTN_HOW, IsClient())
+async def how_it_works(message: Message):
+    await message.answer(_HOW_IT_WORKS_TEXT)
 
 
 @router.message(Command("cancel"))

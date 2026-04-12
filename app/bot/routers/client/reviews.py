@@ -30,8 +30,7 @@ async def all_reviews(callback: CallbackQuery, callback_data: ReviewListCB, sess
     from app.bot.keyboards.admin_inline import reviews_pagination_kb
     reviews = await ReviewRepo(session).get_approved()
     if not reviews:
-        await callback.message.answer("📭 Пока нет одобренных отзывов")
-        await callback.answer()
+        await callback.answer("📭 Пока нет одобренных отзывов", show_alert=True)
         return
 
     total_pages = max(1, (len(reviews) + REVIEWS_PAGE_SIZE - 1) // REVIEWS_PAGE_SIZE)
@@ -48,7 +47,10 @@ async def all_reviews(callback: CallbackQuery, callback_data: ReviewListCB, sess
     text = header + "\n\n" + "\n\n".join(lines)
     kb = reviews_pagination_kb(page, total_pages)
 
-    await callback.message.answer(text, reply_markup=kb)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+    except Exception:
+        pass  # MessageNotModified — already on this page
     await callback.answer()
 
 
@@ -130,6 +132,15 @@ async def got_review_text(
             reply_markup=review_moderation_kb(review.id),
         ))
         await message.answer("🙏 Спасибо за обратную связь!", reply_markup=reply_kb)
+
+        # Avito nudge: clients who came from Avito are likely registered there —
+        # a review on Avito strengthens the listing that brought them in.
+        # Only shown when avito_profile_url is configured in settings.
+        if user.source == "avito" and settings.avito_profile_url:
+            await message.answer(
+                f"⭐ Если вам не сложно — оставьте также оценку на Авито, это помогает другим "
+                f"клиентам найти нас:\n{settings.avito_profile_url}"
+            )
     else:
         # Duplicate submit — no new admin alert
         await message.answer(

@@ -280,6 +280,12 @@ def client_completed_order_kb(order_id: int) -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(
+                    text="➕ Создать ещё заявку",
+                    callback_data=OrderCB(order_id=order_id, action="new_order").pack(),
+                ),
+            ],
+            [
+                InlineKeyboardButton(
                     text="🔄 Обновить",
                     callback_data=OrderCB(order_id=order_id, action="client_refresh").pack(),
                 ),
