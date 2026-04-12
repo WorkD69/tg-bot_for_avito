@@ -287,6 +287,8 @@ class AuctionService:
                     "📤 Нажмите кнопку, чтобы отправить клиенту реквизиты для оплаты",
                     reply_markup=send_requisites_kb(order.id),
                 ))
+            # Schedule a one-time reminder if operator hasn't sent requisites in 30 min
+            _schedule_requisites_reminder(order.id)
 
         logger.info(
             "Order #%d assigned to operator #%d, amount=%s",
@@ -375,3 +377,83 @@ def _remove_scheduler_job(order_id: int) -> None:
         scheduler.remove_job(f"auction_{order_id}")
     except JobLookupError:
         pass
+
+
+def _schedule_requisites_reminder(order_id: int) -> None:
+    """Schedule a one-shot reminder to the operator in 30 min if requisites not yet sent.
+
+    Safe to call multiple times — replace_existing=True ensures only one job per order.
+    Only scheduled in manual payment mode (no robokassa_login).
+    Never raises — scheduling failure must not break close_auction().
+    """
+    from datetime import datetime, timezone, timedelta
+    from app.scheduler.setup import scheduler
+
+    try:
+        run_date = datetime.now(timezone.utc) + timedelta(minutes=30)
+        scheduler.add_job(
+            _remind_operator_requisites,
+            "date",
+            run_date=run_date,
+            args=[order_id],
+            id=f"req_reminder_{order_id}",
+            replace_existing=True,
+        )
+        logger.info("Requisites reminder scheduled for order #%d at %s", order_id, run_date)
+    except Exception:
+        logger.error(
+            "Failed to schedule requisites reminder for order #%d — reminder skipped, auction unaffected",
+            order_id,
+            exc_info=True,
+        )
+
+
+async def _remind_operator_requisites(order_id: int) -> None:
+    """APScheduler job — fires 30 min after operator assignment.
+
+    Checks if requisites were sent (order_logs has requisites_sent).
+    If not — sends a single reminder to the operator's DM.
+    Idempotent: only one job per order, only fires once.
+    """
+    from app.db.engine import AsyncSessionFactory
+    from app.bot.instance import bot
+    from sqlalchemy import select, exists
+    from app.db.models.order_log import OrderLog, OrderLogAction
+
+    async with AsyncSessionFactory() as session:
+        try:
+            order = await session.get(Order, order_id)
+            if not order or order.status != OrderStatus.awaiting_payment:
+                # Order resolved or cancelled — no reminder needed
+                return
+
+            # Check if requisites already sent
+            already_sent = await session.scalar(
+                select(exists().where(
+                    (OrderLog.order_id == order_id) &
+                    (OrderLog.action == OrderLogAction.requisites_sent)
+                ))
+            )
+            if already_sent:
+                logger.info(
+                    "req_reminder: order #%d — requisites already sent, skipping",
+                    order_id,
+                )
+                return
+
+            # Fetch operator
+            from app.repositories.user_repo import UserRepo
+            operator = await UserRepo(session).get_by_id(order.operator_id) if order.operator_id else None
+            if not operator:
+                return
+
+            from app.bot.keyboards.order_inline import send_requisites_kb
+            await bot.send_message(
+                operator.telegram_id,
+                f"⏰ Напоминание: по заявке №{order_id} клиент ещё ждёт реквизиты для оплаты\n"
+                "📤 Нажмите кнопку, чтобы отправить реквизиты",
+                reply_markup=send_requisites_kb(order_id),
+            )
+            logger.info("Requisites reminder sent to operator for order #%d", order_id)
+        except Exception:
+            logger.exception("_remind_operator_requisites failed for order #%d", order_id)

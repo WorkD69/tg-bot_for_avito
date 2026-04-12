@@ -238,15 +238,24 @@ async def cmd_complete_order(message: Message, session: AsyncSession, post_commi
         detail="Admin forced complete",
     )
 
-    # Create earning record for payout tracking
+    # Create earning record for payout tracking.
+    # If the assigned operator is an admin (e.g. admin took the order themselves),
+    # they receive admin_payout_percent (100%). Regular operators get operator_payout_percent (70%).
     if order.payment_amount and order.operator_id:
         from app.repositories.earning_repo import EarningRepo
         from app.config import settings as _settings
+        from app.db.models.user import UserRole
+        op_user = await UserRepo(session).get_by_id(order.operator_id)
+        payout_pct = (
+            _settings.admin_payout_percent
+            if op_user and op_user.role == UserRole.admin
+            else _settings.operator_payout_percent
+        )
         await EarningRepo(session).create_for_order(
             order_id=order_id,
             operator_id=order.operator_id,
             gross_amount=order.payment_amount,
-            payout_percent=_settings.operator_payout_percent,
+            payout_percent=payout_pct,
         )
 
     from app.bot.instance import bot
@@ -396,7 +405,6 @@ async def cmd_commands(message: Message):
         "/operators — список всех операторов\n"
         "/admins — список всех администраторов\n\n"
         "— Заявки —\n"
-        "/stats — статистика заявок по статусам\n"
         "/endauction {id} — завершить аукцион досрочно\n"
         "/confirmpayment {id} — подтвердить оплату вручную\n"
         "/completeorder {id} — принудительно завершить заявку\n"

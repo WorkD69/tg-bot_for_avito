@@ -199,5 +199,8 @@ async def refresh_order_card(
     text = format_order_card(order, is_admin=(user.role == UserRole.admin), viewer_id=user.id)
     kb = _pick_kb(order, user.id)
 
-    await callback.message.answer(text, reply_markup=kb)
-    await callback.answer("✅ Обновлено")
+    try:
+        await callback.message.edit_text(text, reply_markup=kb)
+        await callback.answer("✅ Обновлено")
+    except Exception:
+        await callback.answer("✅ Уже актуально")

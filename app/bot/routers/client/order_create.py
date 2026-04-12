@@ -22,24 +22,49 @@ MSK = timezone(timedelta(hours=3))
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+import re as _re
+
+# Matches exactly DD.MM.YYYY — two digits, dot, two digits, dot, four digits
+_DATE_RE = _re.compile(r"^\d{2}\.\d{2}\.\d{4}$")
+
+# Matches a suspicious "thousands separator" pattern: 1–3 digits, separator, exactly 3 digits, end
+# e.g. "1,500" or "1.500" — ambiguous between "1500" and "1.5"
+_AMBIGUOUS_RE = _re.compile(r"^\d{1,3}[.,]\d{3}$")
+
+
 def _parse_budget(raw: str) -> Decimal:
     """Parse budget string → Decimal. Raises ValueError/InvalidOperation on bad input.
 
     Accepted:
-      "1500", "1500.50", "1 500", "1,500", "1500р", "1500руб", "1500₽"
+      "1500", "1500.50", "1 500", "1500р", "1500руб", "1500₽", "1500,50"
     Rejected:
+      "1,500" / "1.500" — ambiguous (thousands vs decimal?)
       empty string, negative, zero, > MAX_BUDGET, pure text
     """
+    # Strip currency suffixes and whitespace first
     cleaned = (
         raw.strip()
-        .replace(" ", "")
-        .replace(",", ".")
         .rstrip("рРрубРУБ₽")
-        .strip(".")
+        .strip()
     )
     if not cleaned:
         raise ValueError("empty")
-    amount = Decimal(cleaned)
+
+    # Remove spaces used as thousands separator (e.g. "1 500" → "1500")
+    no_spaces = cleaned.replace(" ", "")
+
+    # Reject ambiguous patterns: "1,500" or "1.500" (1–3 digits + separator + 3 digits)
+    if _AMBIGUOUS_RE.match(no_spaces):
+        raise ValueError("ambiguous")
+
+    # Now safe to convert comma → decimal point
+    normalized = no_spaces.replace(",", ".")
+
+    try:
+        amount = Decimal(normalized)
+    except InvalidOperation:
+        raise ValueError("invalid")
+
     if amount <= 0:
         raise ValueError("non-positive")
     if amount > MAX_BUDGET:
@@ -50,18 +75,27 @@ def _parse_budget(raw: str) -> Decimal:
 def _parse_deadline(raw: str):
     """Parse date string → date. Raises descriptive exceptions on bad input.
 
-    Returns (date, None) on success.
-    Raises ValueError("format") if string cannot be parsed as DD.MM.YYYY.
-    Raises ValueError("past") if the date is in the past.
+    Raises ValueError("format") if string doesn't match DD.MM.YYYY pattern.
+    Raises ValueError("nonexistent") if the date pattern is right but date doesn't exist.
+    Raises ValueError("past") if the date is valid but in the past.
     """
     text = raw.strip()
+
+    # Step 1: structural format check — must be exactly DD.MM.YYYY
+    if not _DATE_RE.match(text):
+        raise ValueError("format")
+
+    # Step 2: logical existence check — 32.01.2026, 31.02.2026, etc.
     try:
         deadline = datetime.strptime(text, "%d.%m.%Y").date()
     except ValueError:
-        raise ValueError("format")
+        raise ValueError("nonexistent")
+
+    # Step 3: past check
     today = datetime.now(MSK).date()
     if deadline < today:
         raise ValueError("past")
+
     return deadline
 
 
@@ -90,7 +124,8 @@ async def start_order(message: Message, state: FSMContext, session: AsyncSession
     await state.update_data(files=[])
     await message.answer(
         "📎 Отправьте файлы с заданием (до 10 штук)\n"
-        "Когда закончите — отправьте /done"
+        "Когда закончите — отправьте /done\n"
+        "Для отмены — /cancel"
     )
 
 
@@ -146,7 +181,8 @@ async def _ask_comment(message: Message, state: FSMContext):
     await message.answer(
         "💬 Добавьте комментарий к заданию\n"
         f"Максимум {MAX_COMMENT_LEN} символов\n"
-        "Если комментария нет — отправьте «-»"
+        "Если комментария нет — отправьте «-»\n"
+        "Для отмены — /cancel"
     )
 
 
@@ -177,7 +213,8 @@ async def got_comment(message: Message, state: FSMContext):
     await state.set_state(OrderCreateStates.waiting_deadline)
     await message.answer(
         "📅 Укажите дедлайн в формате ДД.ММ.ГГГГ\n"
-        "Например: 25.05.2026 — дата должна быть сегодня или позже"
+        "Например: 25.05.2026 — дата должна быть сегодня или позже\n"
+        "Для отмены — /cancel"
     )
 
 
@@ -200,14 +237,19 @@ async def got_deadline(message: Message, state: FSMContext):
         reason = str(e)
         if reason == "format":
             await message.answer(
-                "❌ Не могу распознать дату — проверьте формат\n\n"
+                "❌ Неверный формат даты\n\n"
                 "Нужно: ДД.ММ.ГГГГ\n"
                 "Пример: 25.05.2026"
+            )
+        elif reason == "nonexistent":
+            await message.answer(
+                "❌ Такой даты не существует — проверьте день и месяц\n"
+                "Пример корректной даты: 25.05.2026"
             )
         elif reason == "past":
             await message.answer(
                 "❌ Эта дата уже прошла\n"
-                "Укажите сегодняшнюю дату или любую будущую в формате ДД.ММ.ГГГГ"
+                "Укажите сегодняшнюю или будущую дату в формате ДД.ММ.ГГГГ"
             )
         else:
             await message.answer("❌ Некорректная дата — введите в формате ДД.ММ.ГГГГ")
@@ -216,7 +258,8 @@ async def got_deadline(message: Message, state: FSMContext):
     await state.set_state(OrderCreateStates.waiting_budget)
     await message.answer(
         "💰 Укажите желаемый бюджет в рублях\n"
-        "Например: 1500 или 2000"
+        "Например: 1500 или 2000\n"
+        "Для отмены — /cancel"
     )
 
 
@@ -244,10 +287,15 @@ async def got_budget(
                 f"❌ Слишком большая сумма — максимум {MAX_BUDGET:,.0f} ₽\n"
                 "Введите реальный бюджет цифрами"
             )
+        elif reason == "ambiguous":
+            await message.answer(
+                "❌ Неоднозначный формат суммы\n"
+                "Используйте: 1500 или 1500,50 (не 1,500 или 1.500)"
+            )
         else:
             await message.answer(
                 "❌ Введите сумму числом в рублях\n"
-                "Например: 1500 или 2000"
+                "Например: 1500 или 1500,50"
             )
         return
 

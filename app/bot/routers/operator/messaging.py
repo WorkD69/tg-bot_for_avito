@@ -244,7 +244,7 @@ async def negot_accept(
             post_commit.append(bot.send_message(
                 client.telegram_id,
                 f"{price_line}⏳ Ожидайте — оператор отправит обновлённые реквизиты для оплаты",
-                reply_markup=client_awaiting_payment_kb(order.id, show_paid_btn=True),
+                reply_markup=client_awaiting_payment_kb(order.id, show_paid_btn=False),
             ))
 
     from app.bot.keyboards.order_inline import send_requisites_kb
@@ -351,7 +351,7 @@ async def counter_offer_done(message: Message, state: FSMContext, session: Async
                 client.telegram_id,
                 f"🔄 Оператор предлагает новую сумму по заявке №{order_id}: {_money(amount)}{comment_line}\n"
                 "⏳ Ожидайте обновлённые реквизиты для оплаты",
-                reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=True),
+                reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=False),
             ))
 
     await message.answer(

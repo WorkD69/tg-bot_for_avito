@@ -1,3 +1,4 @@
+import re as _re
 from decimal import Decimal, InvalidOperation
 
 from aiogram import F, Router
@@ -13,6 +14,28 @@ from app.db.models.user import User
 from app.repositories.order_repo import OrderRepo
 
 router = Router()
+
+# Ambiguous "thousands separator" pattern: 1–3 digits, separator, exactly 3 digits
+_AMBIGUOUS_BID_RE = _re.compile(r"^\d{1,3}[.,]\d{3}$")
+
+
+def _parse_bid_amount(raw: str) -> Decimal:
+    """Parse bid string → Decimal.
+
+    Accepted: "1200", "1 200", "1200р", "1200₽", "1200,50", "1200.50"
+    Rejected: "1,200" / "1.200" (ambiguous), empty, <=0, non-numeric
+    """
+    cleaned = raw.strip().rstrip("рРрубРУБ₽").strip()
+    if not cleaned:
+        raise ValueError("empty")
+    no_spaces = cleaned.replace(" ", "")
+    if _AMBIGUOUS_BID_RE.match(no_spaces):
+        raise ValueError("ambiguous")
+    normalized = no_spaces.replace(",", ".")
+    amount = Decimal(normalized)  # raises InvalidOperation on garbage
+    if amount <= 0:
+        raise ValueError("non-positive")
+    return amount
 
 
 @router.callback_query(OrderCB.filter(F.action == "bid"), IsOperator())
@@ -64,22 +87,20 @@ async def start_bid(
 async def got_bid_price(
     message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list
 ):
-    raw = (
-        message.text.strip()
-        .replace(" ", "")
-        .replace(",", ".")
-        .rstrip("рРрубРУБ₽")
-        .strip(".")
-    )
     try:
-        amount = Decimal(raw)
-        if amount <= 0:
-            raise ValueError
-    except (ValueError, InvalidOperation):
-        await message.answer(
-            "❌ Введите сумму числом в рублях\n"
-            "Например: 1200"
-        )
+        amount = _parse_bid_amount(message.text)
+    except (ValueError, InvalidOperation) as e:
+        reason = str(e)
+        if reason == "ambiguous":
+            await message.answer(
+                "❌ Неоднозначный формат суммы\n"
+                "Используйте: 1200 или 1200,50 (не 1,200 или 1.200)"
+            )
+        else:
+            await message.answer(
+                "❌ Введите сумму числом в рублях\n"
+                "Например: 1200"
+            )
         return
 
     data = await state.get_data()

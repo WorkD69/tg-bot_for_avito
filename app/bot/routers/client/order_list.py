@@ -28,6 +28,15 @@ router = Router()
 MAX_FILES = 10
 
 
+def _requisites_sent(order) -> bool:
+    """True if operator has already sent requisites for this order.
+
+    Checks order.logs (eager-loaded via load_relations=True) — no extra DB query.
+    Used to guard the 'Я оплатил' button so it only appears after requisites arrive.
+    """
+    return any(log.action == OrderLogAction.requisites_sent for log in (order.logs or []))
+
+
 @router.message(F.text == BTN_CURRENT, IsClient())
 async def current_orders(message: Message, session: AsyncSession, user: User):
     orders = await OrderRepo(session).get_client_active_orders(user.id)
@@ -66,8 +75,9 @@ async def view_order_client(
         kb = client_cancelled_order_kb(order.id)
     elif order.status == OrderStatus.awaiting_payment:
         text = format_client_card(order)
-        # In online (Robokassa) mode the link is in the message; "Я оплатил" is for manual mode only
-        kb = client_awaiting_payment_kb(order.id, show_paid_btn=not bool(settings.robokassa_login))
+        # "Я оплатил" only in manual mode AND only after operator sent requisites
+        show_paid = not bool(settings.robokassa_login) and _requisites_sent(order)
+        kb = client_awaiting_payment_kb(order.id, show_paid_btn=show_paid)
     else:
         text = format_client_card(order)
         can_cancel = order.status == OrderStatus.pending
@@ -97,7 +107,9 @@ async def refresh_order_client(
         kb = client_cancelled_order_kb(order.id)
     elif order.status == OrderStatus.awaiting_payment:
         text = format_client_card(order)
-        kb = client_awaiting_payment_kb(order.id, show_paid_btn=not bool(settings.robokassa_login))
+        # "Я оплатил" only in manual mode AND only after operator sent requisites
+        show_paid = not bool(settings.robokassa_login) and _requisites_sent(order)
+        kb = client_awaiting_payment_kb(order.id, show_paid_btn=show_paid)
     else:
         text = format_client_card(order)
         can_cancel = order.status == OrderStatus.pending
