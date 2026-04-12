@@ -288,3 +288,187 @@ class TestBusinessSummary:
 
         summary_after = await repo.get_business_summary()
         assert summary_after["total_gross"] >= gross_before + Decimal("3000")
+
+
+# ── E. Source Funnel ──────────────────────────────────────────────────────────
+
+async def _make_user_attributed(
+    session,
+    tg_id: int,
+    name: str,
+    source: str = "unknown",
+    campaign: str | None = None,
+):
+    from app.db.models.user import User, UserRole
+    user = User(
+        telegram_id=tg_id,
+        full_name=name,
+        role=UserRole.client,
+        source=source,
+        campaign=campaign,
+    )
+    session.add(user)
+    await session.flush()
+    return user
+
+
+class TestSourceFunnel:
+
+    async def test_source_funnel_returns_list(self, session):
+        """get_source_funnel returns a list (possibly empty if no users)."""
+        repo = AnalyticsRepo(session)
+        rows = await repo.get_source_funnel()
+        assert isinstance(rows, list)
+
+    async def test_source_funnel_has_required_keys(self, session):
+        """Each row contains all required keys."""
+        await _make_user_attributed(session, 90001, "SF User", "avito")
+        await session.commit()
+
+        repo = AnalyticsRepo(session)
+        rows = await repo.get_source_funnel()
+        assert rows, "Expected at least one source row"
+        for row in rows:
+            for key in ("source", "registered", "orders_created", "orders_paid",
+                        "orders_completed", "gross_revenue", "completion_rate"):
+                assert key in row, f"Missing key '{key}' in row: {row}"
+
+    async def test_source_funnel_counts_registrations(self, session):
+        """Registrations are counted per source."""
+        await _make_user_attributed(session, 90010, "Avito U1", "avito")
+        await _make_user_attributed(session, 90011, "Avito U2", "avito")
+        await _make_user_attributed(session, 90012, "TG U1", "tg_channel")
+        await session.commit()
+
+        repo = AnalyticsRepo(session)
+        rows = await repo.get_source_funnel()
+        by_source = {r["source"]: r for r in rows}
+
+        assert by_source.get("avito", {}).get("registered", 0) >= 2
+        assert by_source.get("tg_channel", {}).get("registered", 0) >= 1
+
+    async def test_source_funnel_orders_created(self, session):
+        """orders_created is counted from order_logs for the client's source."""
+        client = await _make_user_attributed(session, 90020, "Avito Client", "avito")
+        order = await make_order(session, client.id)
+        await _add_log(session, order.id, OrderLogAction.created, client.id)
+        await session.commit()
+
+        repo = AnalyticsRepo(session)
+        rows = await repo.get_source_funnel()
+        by_source = {r["source"]: r for r in rows}
+        assert by_source.get("avito", {}).get("orders_created", 0) >= 1
+
+    async def test_source_funnel_gross_revenue(self, session):
+        """gross_revenue sums operator_earnings for orders from users of that source."""
+        from app.repositories.earning_repo import EarningRepo
+        from app.db.models.user import UserRole
+
+        client = await _make_user_attributed(session, 90030, "AvClient Revenue", "avito")
+        op = await make_user(session, 90031, "OpRev", UserRole.operator)
+        order = await make_order(session, client.id)
+        order_repo = OrderRepo(session)
+        await order_repo.assign_operator(order, op.id, Decimal("5000"))
+        await order_repo.confirm_payment(order)
+        await order_repo.update_status(order, OrderStatus.completed)
+        await EarningRepo(session).create_for_order(
+            order_id=order.id, operator_id=op.id,
+            gross_amount=Decimal("5000"), payout_percent=80.0,
+        )
+        await session.commit()
+
+        repo = AnalyticsRepo(session)
+        rows = await repo.get_source_funnel()
+        by_source = {r["source"]: r for r in rows}
+        assert by_source.get("avito", {}).get("gross_revenue", Decimal("0")) >= Decimal("5000")
+
+    async def test_source_funnel_period_filter(self, session):
+        """since filter returns zero results when set to future."""
+        future = datetime.now(timezone.utc) + timedelta(days=365)
+        repo = AnalyticsRepo(session)
+        rows = await repo.get_source_funnel(since=future)
+        assert rows == []
+
+    async def test_source_funnel_sorted_by_registered_desc(self, session):
+        """Rows sorted by registered count descending."""
+        repo = AnalyticsRepo(session)
+        rows = await repo.get_source_funnel()
+        counts = [r["registered"] for r in rows]
+        assert counts == sorted(counts, reverse=True)
+
+    async def test_source_funnel_completion_rate_zero_when_no_orders(self, session):
+        """completion_rate is 0.0 when orders_created = 0."""
+        await _make_user_attributed(session, 90040, "NoOrder User", "direct")
+        await session.commit()
+
+        repo = AnalyticsRepo(session)
+        rows = await repo.get_source_funnel()
+        by_source = {r["source"]: r for r in rows}
+        direct = by_source.get("direct")
+        if direct and direct["orders_created"] == 0:
+            assert direct["completion_rate"] == 0.0
+
+
+# ── F. Campaign Funnel ────────────────────────────────────────────────────────
+
+class TestCampaignFunnel:
+
+    async def test_campaign_funnel_returns_list(self, session):
+        """get_campaign_funnel returns a list."""
+        repo = AnalyticsRepo(session)
+        rows = await repo.get_campaign_funnel()
+        assert isinstance(rows, list)
+
+    async def test_campaign_funnel_has_required_keys(self, session):
+        """Each row has source, campaign, and all funnel keys."""
+        await _make_user_attributed(session, 91001, "Camp User", "avito", "ad1")
+        await session.commit()
+
+        repo = AnalyticsRepo(session)
+        rows = await repo.get_campaign_funnel()
+        assert rows
+        for row in rows:
+            for key in ("source", "campaign", "registered", "orders_created",
+                        "orders_paid", "orders_completed", "gross_revenue", "completion_rate"):
+                assert key in row, f"Missing key '{key}'"
+
+    async def test_campaign_funnel_groups_by_campaign(self, session):
+        """Two different campaigns within same source appear as separate rows."""
+        await _make_user_attributed(session, 91010, "Ad1 U1", "avito", "ad1")
+        await _make_user_attributed(session, 91011, "Ad1 U2", "avito", "ad1")
+        await _make_user_attributed(session, 91012, "Ad2 U1", "avito", "ad2")
+        await session.commit()
+
+        repo = AnalyticsRepo(session)
+        rows = await repo.get_campaign_funnel(source_filter="avito")
+
+        avito_rows = {r["campaign"]: r for r in rows if r["source"] == "avito"}
+        assert avito_rows.get("ad1", {}).get("registered", 0) >= 2
+        assert avito_rows.get("ad2", {}).get("registered", 0) >= 1
+
+    async def test_campaign_funnel_source_filter(self, session):
+        """source_filter limits results to that source only."""
+        await _make_user_attributed(session, 91020, "TG Camp", "tg_channel", "p1")
+        await session.commit()
+
+        repo = AnalyticsRepo(session)
+        rows = await repo.get_campaign_funnel(source_filter="avito")
+        sources = {r["source"] for r in rows}
+        assert "tg_channel" not in sources
+
+    async def test_campaign_funnel_null_campaign(self, session):
+        """Users without campaign appear with campaign=None."""
+        await _make_user_attributed(session, 91030, "NoCamp", "avito", None)
+        await session.commit()
+
+        repo = AnalyticsRepo(session)
+        rows = await repo.get_campaign_funnel(source_filter="avito")
+        campaigns = [r["campaign"] for r in rows if r["source"] == "avito"]
+        assert None in campaigns
+
+    async def test_campaign_funnel_period_filter_future(self, session):
+        """since in future returns empty list."""
+        future = datetime.now(timezone.utc) + timedelta(days=365)
+        repo = AnalyticsRepo(session)
+        rows = await repo.get_campaign_funnel(since=future)
+        assert rows == []

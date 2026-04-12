@@ -1,9 +1,11 @@
 """Admin analytics commands.
 
 Commands:
-  /stats                          — full business snapshot (orders + payout + funnel top)
-  /funnelstats [period]           — funnel with conversion rates per stage
-  /sourcestats [period]           — user acquisition breakdown by source
+  /stats                               — full business snapshot (orders + payout + funnel top)
+  /funnelstats [period]                — funnel with conversion rates per stage
+  /sourcestats [period]                — user acquisition breakdown by source (registration counts)
+  /sourcefunnel [period]               — funnel conversion metrics grouped by source
+  /campaignstats [source] [period]     — funnel conversion metrics grouped by campaign
 
 Period tokens: today | 7d | 30d | all (default: all time)
 """
@@ -24,9 +26,11 @@ router = Router()
 SOURCE_LABEL = {
     "avito": "Авито",
     "tg_channel": "Telegram-канал",
-    "direct": "Прямой (deeplink)",
-    "unknown": "Неизвестно",
+    "direct": "Прямой / другой deeplink",
+    "unknown": "Неизвестно (без deeplink)",
 }
+
+KNOWN_SOURCES = ("avito", "tg_channel", "direct")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -213,7 +217,116 @@ async def cmd_source_stats(message: Message, session: AsyncSession):
 
     lines.append("")
     lines.append("Как настроить атрибуцию:")
-    lines.append("  Deeplink: t.me/YourBot?start=avito")
-    lines.append("  Доступные источники: avito, tg_channel, direct")
+    lines.append("  t.me/YourBot?start=avito_ad1  →  source=avito, campaign=ad1")
+    lines.append("  t.me/YourBot?start=tg_channel_post1  →  source=tg_channel, campaign=post1")
+    lines.append("  Подробнее: /sourcefunnel /campaignstats")
+
+    await message.answer("\n".join(lines))
+
+
+# ── Funnel row formatter ──────────────────────────────────────────────────────
+
+def _format_funnel_row(row: dict, show_campaign: bool = False) -> str:
+    """Format one source/campaign row into a compact multiline block."""
+    source_label = SOURCE_LABEL.get(row["source"], row["source"])
+    campaign = row.get("campaign")
+
+    if show_campaign:
+        if campaign:
+            header = f"📌 {source_label} / {campaign}"
+        else:
+            header = f"📌 {source_label} (без кампании)"
+    else:
+        header = f"📌 {source_label}"
+
+    reg = row["registered"]
+    created = row["orders_created"]
+    paid = row["orders_paid"]
+    completed = row["orders_completed"]
+    gross = row["gross_revenue"]
+    rate = row.get("completion_rate", 0.0)
+
+    lines = [header]
+    lines.append(f"  👤 Зарег.: {reg}  →  📋 Заявки: {created} ({_conv(reg, created)})  →  💳 Оплат: {paid} ({_conv(created, paid)})  →  ✅ Завершено: {completed} ({_conv(paid, completed)})")
+    lines.append(f"  💰 Выручка: {_money(gross)}   🎯 Completion: {rate}%")
+    return "\n".join(lines)
+
+
+# ── /sourcefunnel ─────────────────────────────────────────────────────────────
+
+@router.message(Command("sourcefunnel"), IsAdmin())
+async def cmd_source_funnel(message: Message, session: AsyncSession):
+    """
+    /sourcefunnel [period]
+
+    Conversion funnel for each acquisition source:
+    registrations → orders → paid → completed + gross revenue.
+    Period: today | 7d | 30d | all (default: all time)
+    """
+    args = (message.text or "").split(maxsplit=2)[1:]
+    since, period_label = _parse_period(args[0] if args else None)
+
+    repo = AnalyticsRepo(session)
+    rows = await repo.get_source_funnel(since=since)
+
+    if not rows:
+        await message.answer(f"📭 Нет данных ({period_label})")
+        return
+
+    lines = [f"📊 Воронка по источникам ({period_label})\n"]
+    for row in rows:
+        lines.append(_format_funnel_row(row, show_campaign=False))
+        lines.append("")
+
+    lines.append("— Deeplink формат: t.me/bot?start=avito_ad1")
+    await message.answer("\n".join(lines))
+
+
+# ── /campaignstats ────────────────────────────────────────────────────────────
+
+@router.message(Command("campaignstats"), IsAdmin())
+async def cmd_campaign_stats(message: Message, session: AsyncSession):
+    """
+    /campaignstats [source] [period]
+
+    Conversion funnel broken down by campaign within each source.
+    source: avito | tg_channel | direct (optional filter)
+    period: today | 7d | 30d | all (default: all time)
+
+    Examples:
+      /campaignstats              — all sources, all time
+      /campaignstats avito        — only avito campaigns
+      /campaignstats avito 7d     — avito, last 7 days
+      /campaignstats 7d           — all sources, last 7 days
+    """
+    parts = (message.text or "").split()[1:]
+
+    source_filter: str | None = None
+    period_token: str | None = None
+
+    for part in parts:
+        p = part.strip().lower()
+        if p in KNOWN_SOURCES:
+            source_filter = p
+        else:
+            period_token = p
+
+    since, period_label = _parse_period(period_token)
+
+    repo = AnalyticsRepo(session)
+    rows = await repo.get_campaign_funnel(source_filter=source_filter, since=since)
+
+    if not rows:
+        filter_label = f" / {SOURCE_LABEL.get(source_filter, source_filter)}" if source_filter else ""
+        await message.answer(f"📭 Нет данных{filter_label} ({period_label})")
+        return
+
+    filter_label = f" / {SOURCE_LABEL.get(source_filter, source_filter)}" if source_filter else ""
+    lines = [f"📊 Кампании{filter_label} ({period_label})\n"]
+
+    for row in rows:
+        # Skip sources without campaigns if there's a filter (show only campaign rows)
+        lines.append(_format_funnel_row(row, show_campaign=True))
+        lines.append("")
 
     await message.answer("\n".join(lines))

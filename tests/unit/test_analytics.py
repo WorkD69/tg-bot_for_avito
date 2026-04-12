@@ -1,10 +1,11 @@
 """Unit tests for analytics layer — no DB required.
 
 Tests:
-  A. Source extraction from /start deeplink payload
-  B. Period parsing helper (_parse_period)
-  C. Conversion rate helper (_conv)
-  D. KNOWN_SOURCES constant
+  A. Source extraction from /start deeplink payload (_extract_source — backward compat)
+  B. Payload parsing into (source, campaign) (_parse_start_payload)
+  C. Period parsing helper (_parse_period)
+  D. Conversion rate helper (_conv)
+  E. KNOWN_SOURCES constant
 """
 import pytest
 
@@ -64,6 +65,69 @@ class TestSourceExtraction:
         from app.bot.middlewares.user_register import _extract_source
         event = self._make_event("/start direct")
         assert _extract_source(event) == "direct"
+
+
+class TestParseStartPayload:
+    """Tests for _parse_start_payload — returns (source, campaign) tuple."""
+
+    def _parse(self, payload: str):
+        from app.bot.middlewares.user_register import _parse_start_payload
+        return _parse_start_payload(payload)
+
+    # ── Known source, no campaign ─────────────────────────────────────────────
+
+    def test_avito_alone(self):
+        assert self._parse("avito") == ("avito", None)
+
+    def test_tg_channel_alone(self):
+        assert self._parse("tg_channel") == ("tg_channel", None)
+
+    def test_direct_alone(self):
+        assert self._parse("direct") == ("direct", None)
+
+    # ── Known source + campaign ───────────────────────────────────────────────
+
+    def test_avito_with_campaign(self):
+        assert self._parse("avito_ad1") == ("avito", "ad1")
+
+    def test_avito_with_longer_campaign(self):
+        assert self._parse("avito_summer_promo") == ("avito", "summer_promo")
+
+    def test_tg_channel_with_campaign(self):
+        assert self._parse("tg_channel_post1") == ("tg_channel", "post1")
+
+    def test_tg_channel_with_campaign_underscore(self):
+        assert self._parse("tg_channel_june_ad2") == ("tg_channel", "june_ad2")
+
+    def test_direct_with_campaign(self):
+        assert self._parse("direct_manual1") == ("direct", "manual1")
+
+    # ── Unknown payload → direct + campaign preserved ─────────────────────────
+
+    def test_unknown_payload_becomes_direct_campaign(self):
+        """Non-matching payload → source=direct, campaign=payload (data not lost)."""
+        assert self._parse("mylink123") == ("direct", "mylink123")
+
+    def test_unknown_payload_with_underscores(self):
+        assert self._parse("ref_promo_xyz") == ("direct", "ref_promo_xyz")
+
+    # ── Edge cases ────────────────────────────────────────────────────────────
+
+    def test_empty_payload_returns_unknown(self):
+        assert self._parse("") == ("unknown", None)
+
+    def test_case_insensitive_via_extract_function(self):
+        """_extract_source_and_campaign lowercases before calling _parse_start_payload."""
+        from app.bot.middlewares.user_register import _extract_source_and_campaign
+        from unittest.mock import MagicMock
+        event = MagicMock()
+        event.message = MagicMock()
+        event.message.text = "/start AVITO_AD1"
+        assert _extract_source_and_campaign(event) == ("avito", "ad1")
+
+    def test_avito_underscore_only_treats_empty_campaign_as_none(self):
+        """'avito_' → source=avito, campaign=None (empty string stripped)."""
+        assert self._parse("avito_") == ("avito", None)
 
 
 class TestKnownSources:

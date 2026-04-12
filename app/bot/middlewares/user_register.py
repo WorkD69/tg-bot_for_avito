@@ -8,21 +8,55 @@ from app.config import settings
 from app.db.models.user import KNOWN_SOURCES, UserRole
 from app.repositories.user_repo import UserRepo
 
+# Sorted longest-first so "tg_channel" is matched before single-segment sources
+_SOURCES_SORTED = sorted(KNOWN_SOURCES, key=len, reverse=True)
+
+
+def _parse_start_payload(payload: str) -> tuple[str, str | None]:
+    """Parse a /start deeplink payload into (source, campaign).
+
+    Rules:
+      "avito"           → ("avito", None)
+      "avito_ad1"       → ("avito", "ad1")
+      "tg_channel"      → ("tg_channel", None)
+      "tg_channel_p1"   → ("tg_channel", "p1")
+      "direct_manual1"  → ("direct", "manual1")
+      "somelink"        → ("direct", "somelink")   # unknown → direct, payload preserved as campaign
+      ""                → ("unknown", None)
+    """
+    if not payload:
+        return "unknown", None
+
+    for source in _SOURCES_SORTED:
+        if payload == source:
+            return source, None
+        if payload.startswith(f"{source}_"):
+            campaign = payload[len(source) + 1:] or None
+            return source, campaign
+
+    # No known source prefix matched — treat as direct with full payload as campaign
+    return "direct", payload
+
 
 def _extract_source(event: "Update") -> str:
-    """Extract attribution source from /start deeplink payload, if any."""
+    """Extract attribution source from /start deeplink payload.
+
+    Kept for backward compatibility. For full attribution use _extract_source_and_campaign.
+    """
+    source, _ = _extract_source_and_campaign(event)
+    return source
+
+
+def _extract_source_and_campaign(event: "Update") -> tuple[str, str | None]:
+    """Extract (source, campaign) from /start deeplink payload."""
     if not event.message:
-        return "unknown"
+        return "unknown", None
     text = event.message.text or ""
-    # /start avito  →  payload = "avito"
     parts = text.strip().split(maxsplit=1)
     if len(parts) == 2 and parts[0] == "/start":
         payload = parts[1].strip().lower()
-        if payload in KNOWN_SOURCES:
-            return payload
-        # non-empty but unknown payload → still "direct" (not a deeplink from external)
-        return "direct"
-    return "unknown"
+        return _parse_start_payload(payload)
+    return "unknown", None
 
 
 class UserRegisterMiddleware(BaseMiddleware):
@@ -53,12 +87,15 @@ class UserRegisterMiddleware(BaseMiddleware):
 
         if user is None:
             full_name = tg_user.full_name or tg_user.first_name or "Unknown"
-            source = _extract_source(event) if isinstance(event, Update) else "unknown"
+            source, campaign = (
+                _extract_source_and_campaign(event) if isinstance(event, Update) else ("unknown", None)
+            )
             user = await repo.create(
                 telegram_id=tg_user.id,
                 full_name=full_name,
                 username=tg_user.username,
                 source=source,
+                campaign=campaign,
             )
             if is_admin and user.role != UserRole.admin:
                 await repo.set_role(user, UserRole.admin)

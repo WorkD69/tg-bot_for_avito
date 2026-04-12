@@ -37,6 +37,9 @@ class User(Base, TimestampMixin):
     # Attribution: how the user first arrived. Set once at registration from /start deeplink.
     # 'avito' | 'tg_channel' | 'direct' | 'unknown'
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    # Campaign tag extracted from /start payload after source prefix.
+    # e.g. /start avito_ad1 → source='avito', campaign='ad1'
+    campaign: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     client_orders: Mapped[list["Order"]] = relationship(
         "Order", foreign_keys="Order.client_id", back_populates="client"

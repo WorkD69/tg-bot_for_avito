@@ -1,4 +1,4 @@
-"""AnalyticsRepo — funnel, source attribution, and business health queries.
+"""AnalyticsRepo — funnel, source attribution, campaign attribution, and business health queries.
 
 All queries are read-only aggregations over existing tables.
 No separate analytics_events table — order_logs is the source of truth for
@@ -18,6 +18,7 @@ Funnel stages (in order):
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import case, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -101,6 +102,125 @@ class AnalyticsRepo:
             }
             for r in sorted(rows, key=lambda r: r.count, reverse=True)
         ]
+
+    # ── Source/Campaign Funnel ─────────────────────────────────────────────────
+
+    async def get_source_funnel(self, since: datetime | None = None) -> list[dict]:
+        """Return conversion funnel metrics grouped by source.
+
+        Each row: source, registered, orders_created, orders_paid,
+                  orders_completed, gross_revenue, completion_rate
+        """
+        return await self._attribution_funnel(
+            group_cols=[User.source],
+            row_builder=lambda key: {"source": key[0], "campaign": None},
+            key_fn=lambda row_map, r: (r.source,),
+            source_filter=None,
+            since=since,
+        )
+
+    async def get_campaign_funnel(
+        self,
+        source_filter: str | None = None,
+        since: datetime | None = None,
+    ) -> list[dict]:
+        """Return conversion funnel metrics grouped by (source, campaign).
+
+        If source_filter is given, only rows for that source are returned.
+        Rows with campaign=NULL appear as campaign='(none)' for display.
+        """
+        return await self._attribution_funnel(
+            group_cols=[User.source, User.campaign],
+            row_builder=lambda key: {"source": key[0], "campaign": key[1]},
+            key_fn=lambda row_map, r: (r.source, r.campaign),
+            source_filter=source_filter,
+            since=since,
+        )
+
+    async def _attribution_funnel(
+        self,
+        group_cols: list,
+        row_builder,
+        key_fn,
+        source_filter: str | None,
+        since: datetime | None,
+    ) -> list[dict]:
+        """Generic engine for source or campaign funnel aggregation."""
+
+        def _where_source(q):
+            if source_filter is not None:
+                q = q.where(User.source == source_filter)
+            return q
+
+        # 1. Registrations
+        q_reg = select(*group_cols, func.count(User.id).label("cnt")).group_by(*group_cols)
+        if since:
+            q_reg = q_reg.where(User.created_at >= since)
+        q_reg = _where_source(q_reg)
+        reg_rows = (await self.session.execute(q_reg)).all()
+
+        data: dict[tuple, dict] = {}
+        for r in reg_rows:
+            key = key_fn(data, r)
+            data[key] = {
+                **row_builder(key),
+                "registered": r.cnt,
+                "orders_created": 0,
+                "orders_paid": 0,
+                "orders_completed": 0,
+                "gross_revenue": Decimal("0"),
+            }
+
+        # Helper: order log count grouped by the same dimensions
+        def _log_q(action: OrderLogAction):
+            q = (
+                select(*group_cols, func.count(distinct(OrderLog.order_id)).label("cnt"))
+                .select_from(OrderLog)
+                .join(Order, Order.id == OrderLog.order_id)
+                .join(User, User.id == Order.client_id)
+                .where(OrderLog.action == action)
+                .group_by(*group_cols)
+            )
+            if since:
+                q = q.where(OrderLog.created_at >= since)
+            return _where_source(q)
+
+        for action, field in [
+            (OrderLogAction.created, "orders_created"),
+            (OrderLogAction.payment_confirmed, "orders_paid"),
+            (OrderLogAction.completed, "orders_completed"),
+        ]:
+            for r in (await self.session.execute(_log_q(action))).all():
+                key = key_fn(data, r)
+                if key in data:
+                    data[key][field] = r.cnt
+
+        # 2. Gross revenue
+        q_gross = (
+            select(*group_cols, func.coalesce(func.sum(OperatorEarning.gross_amount), 0).label("gross"))
+            .select_from(OperatorEarning)
+            .join(Order, Order.id == OperatorEarning.order_id)
+            .join(User, User.id == Order.client_id)
+            .group_by(*group_cols)
+        )
+        if since:
+            q_gross = q_gross.where(OperatorEarning.created_at >= since)
+        q_gross = _where_source(q_gross)
+        for r in (await self.session.execute(q_gross)).all():
+            key = key_fn(data, r)
+            if key in data:
+                data[key]["gross_revenue"] = r.gross
+
+        # Compute completion_rate and sort
+        rows = list(data.values())
+        for row in rows:
+            created = row["orders_created"]
+            completed = row["orders_completed"]
+            row["completion_rate"] = (
+                round(completed / created * 100, 1) if created else 0.0
+            )
+
+        return sorted(rows, key=lambda r: r["registered"], reverse=True)
 
     # ── Business Summary ───────────────────────────────────────────────────────
 

@@ -29,8 +29,15 @@ class UserRepo:
         full_name: str,
         username: str | None,
         source: str = "unknown",
+        campaign: str | None = None,
     ) -> User:
-        user = User(telegram_id=telegram_id, full_name=full_name, username=username, source=source)
+        user = User(
+            telegram_id=telegram_id,
+            full_name=full_name,
+            username=username,
+            source=source,
+            campaign=campaign,
+        )
         self.session.add(user)
         await self.session.flush()
         return user
