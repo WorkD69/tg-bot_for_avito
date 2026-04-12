@@ -156,13 +156,15 @@ async def send_requisites_done(message: Message, state: FSMContext, session: Asy
     from app.bot.instance import bot
     from app.bot.keyboards.order_inline import client_awaiting_payment_kb
     from app.bot.formatters import _money
+    from app.config import settings as _cfg
     # Manual payment mode — client confirms via "Я оплатил" button
     post_commit.append(bot.send_message(
         client.telegram_id,
         f"💳 Реквизиты для оплаты заявки №{order_id}\n"
         f"Сумма: {_money(order.payment_amount)}\n\n"
         f"{message.text}\n\n"
-        "После оплаты нажмите «Я оплатил»",
+        "После оплаты нажмите «Я оплатил»\n\n"
+        f"❓ Возникли вопросы по оплате — {_cfg.support_handle}",
         reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=True),
     ))
 
@@ -400,11 +402,13 @@ async def negot_cancel_order(
     from app.config import settings as _settings
 
     # Notifications to other parties — deferred after commit
+    from app.config import settings as _settings_msg
     client = await UserRepo(session).get_by_id(order.client_id)
     if client:
         post_commit.append(bot.send_message(
             client.telegram_id,
-            f"❌ К сожалению, заявка №{order.id} отменена оператором",
+            f"❌ К сожалению, заявка №{order.id} отменена оператором\n\n"
+            f"Если возникли вопросы или хотите создать новую заявку — {_settings_msg.support_handle}",
         ))
     post_commit.append(bot.send_message(
         _settings.operator_group_id,

@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     # URL of your Avito profile/listing — used to nudge avito-source clients to leave a review
     # on Avito after submitting an internal review. Leave empty to disable the nudge.
     avito_profile_url: str = ""
+    # Support Telegram handle shown to clients at high-friction moments.
+    support_handle: str = "@studario_support"
 
     @property
     def webhook_full_url(self) -> str:

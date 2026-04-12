@@ -303,9 +303,11 @@ async def client_paid(
         f"Подтвердить: /confirmpayment {order.id}",
     ))
 
+    from app.config import settings as _cfg
     await callback.message.answer(
         "✅ Спасибо! Мы уведомили администратора об оплате\n"
-        "Ожидайте подтверждения — обычно это занимает несколько минут"
+        "Ожидайте подтверждения — обычно это занимает несколько минут\n\n"
+        f"Если что-то пошло не так — {_cfg.support_handle}"
     )
     await callback.answer()
 
@@ -629,8 +631,10 @@ async def client_dispute(
         f"Свяжитесь с клиентом и рассмотрите заявку",
     ))
 
+    from app.config import settings as _cfg
     await callback.message.answer(
-        "⚠️ Спор открыт — администратор получил уведомление и свяжется с вами"
+        "⚠️ Спор открыт — администратор получил уведомление и свяжется с вами\n\n"
+        f"Или напишите нам напрямую: {_cfg.support_handle}"
     )
     await callback.answer()
 
