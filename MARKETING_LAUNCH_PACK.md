@@ -3,7 +3,7 @@
 Операционный пакет для запуска первых реальных кампаний.
 Всё готово к использованию без дополнительной настройки.
 
-**Бот:** `t.me/ВАШ_БОТ` (подставь реальное имя)
+**Бот:** `t.me/studario1_bot`
 **Тип сервиса:** решение задач по точным наукам — математика, физика, программирование
 
 ---
@@ -13,7 +13,7 @@
 ### Схема нейминга
 
 ```
-t.me/ВАШ_БОТ?start={source}_{campaign_id}
+t.me/studario1_bot?start={source}_{campaign_id}
 ```
 
 Правила campaign_id:
@@ -26,26 +26,26 @@ t.me/ВАШ_БОТ?start={source}_{campaign_id}
 
 | ID кампании | Ссылка | Назначение |
 |------------|--------|-----------|
-| `avito_ad1` | `t.me/ВАШ_БОТ?start=avito_ad1` | Основное объявление — короткий оффер |
-| `avito_ad2` | `t.me/ВАШ_БОТ?start=avito_ad2` | Объявление с примерами предметов |
-| `avito_ad3` | `t.me/ВАШ_БОТ?start=avito_ad3` | Объявление с ценой |
-| `avito_ad4` | `t.me/ВАШ_БОТ?start=avito_ad4` | Объявление с дедлайном ("к завтрашнему дню") |
-| `avito_ad5` | `t.me/ВАШ_БОТ?start=avito_ad5` | Объявление с социальным доказательством |
+| `avito_ad1` | `t.me/studario1_bot?start=avito_ad1` | Основное объявление — короткий оффер |
+| `avito_ad2` | `t.me/studario1_bot?start=avito_ad2` | Объявление с примерами предметов |
+| `avito_ad3` | `t.me/studario1_bot?start=avito_ad3` | Объявление с ценой |
+| `avito_ad4` | `t.me/studario1_bot?start=avito_ad4` | Объявление с дедлайном ("к завтрашнему дню") |
+| `avito_ad5` | `t.me/studario1_bot?start=avito_ad5` | Объявление с социальным доказательством |
 
 ### Telegram-канал — 3 deeplink'а
 
 | ID кампании | Ссылка | Назначение |
 |------------|--------|-----------|
-| `tg_channel_post1` | `t.me/ВАШ_БОТ?start=tg_channel_post1` | Первый пост — знакомство с сервисом |
-| `tg_channel_post2` | `t.me/ВАШ_БОТ?start=tg_channel_post2` | Второй пост — кейс или пример задачи |
-| `tg_channel_story1` | `t.me/ВАШ_БОТ?start=tg_channel_story1` | Пост в Stories или закреплённый |
+| `tg_channel_post1` | `t.me/studario1_bot?start=tg_channel_post1` | Первый пост — знакомство с сервисом |
+| `tg_channel_post2` | `t.me/studario1_bot?start=tg_channel_post2` | Второй пост — кейс или пример задачи |
+| `tg_channel_story1` | `t.me/studario1_bot?start=tg_channel_story1` | Пост в Stories или закреплённый |
 
 ### Прямые / ручные — 2 deeplink'а
 
 | ID кампании | Ссылка | Назначение |
 |------------|--------|-----------|
-| `direct_manual1` | `t.me/ВАШ_БОТ?start=direct_manual1` | Ручная рассылка в личку / VK / WhatsApp |
-| `direct_chat1` | `t.me/ВАШ_БОТ?start=direct_chat1` | Рекомендация в чатах / группах |
+| `direct_manual1` | `t.me/studario1_bot?start=direct_manual1` | Ручная рассылка в личку / VK / WhatsApp |
+| `direct_chat1` | `t.me/studario1_bot?start=direct_chat1` | Рекомендация в чатах / группах |
 
 ### Как не запутаться в кампаниях
 
@@ -80,7 +80,7 @@ t.me/ВАШ_БОТ?start={source}_{campaign_id}
 2. Получаете цену и срок
 3. После оплаты — получаете решение
 
-Написать задачу: t.me/ВАШ_БОТ?start=avito_ad1
+Написать задачу: t.me/studario1_bot?start=avito_ad1
 ```
 
 ---
@@ -99,7 +99,7 @@ t.me/ВАШ_БОТ?start={source}_{campaign_id}
 Работаю быстро: большинство задач — за 2–6 часов.
 Объясняю решение, а не просто даю ответ.
 
-Оставить задачу: t.me/ВАШ_БОТ?start=avito_ad2
+Оставить задачу: t.me/studario1_bot?start=avito_ad2
 ```
 
 ---
@@ -115,7 +115,7 @@ t.me/ВАШ_БОТ?start={source}_{campaign_id}
 Никаких скрытых доплат после оплаты.
 
 Узнать цену своей задачи:
-t.me/ВАШ_БОТ?start=avito_ad3
+t.me/studario1_bot?start=avito_ad3
 ```
 
 ---
@@ -131,7 +131,7 @@ t.me/ВАШ_БОТ?start=avito_ad3
 Любой уровень: школа, колледж, вуз, магистратура
 
 Напишите задачу прямо сейчас — отвечу в течение 15 минут:
-t.me/ВАШ_БОТ?start=avito_ad4
+t.me/studario1_bot?start=avito_ad4
 ```
 
 ---
@@ -147,7 +147,7 @@ t.me/ВАШ_БОТ?start=avito_ad4
 Фиксированная цена до начала работы. Возврат, если не устроит.
 
 Попробуй прямо сейчас:
-t.me/ВАШ_БОТ?start=avito_ad5
+t.me/studario1_bot?start=avito_ad5
 ```
 
 ---
@@ -158,17 +158,17 @@ t.me/ВАШ_БОТ?start=avito_ad5
 
 **CTA 1 — Действие:**
 ```
-Написать задачу → t.me/ВАШ_БОТ
+Написать задачу → t.me/studario1_bot
 ```
 
 **CTA 2 — Вопрос + действие:**
 ```
-Есть задача по математике или физике? Решим быстро → t.me/ВАШ_БОТ
+Есть задача по математике или физике? Решим быстро → t.me/studario1_bot
 ```
 
 **CTA 3 — Цена + действие:**
 ```
-Решение задачи от 500 ₽ — узнать цену: t.me/ВАШ_БОТ
+Решение задачи от 500 ₽ — узнать цену: t.me/studario1_bot
 ```
 
 ---
@@ -191,7 +191,7 @@ t.me/ВАШ_БОТ?start=avito_ad5
 
 Быстро, прозрачно, без лишних переписок.
 
-Попробовать → t.me/ВАШ_БОТ?start=tg_channel_post1
+Попробовать → t.me/studario1_bot?start=tg_channel_post1
 ```
 
 ---
@@ -208,7 +208,7 @@ t.me/ВАШ_БОТ?start=avito_ad5
 
 Именно для таких ситуаций мы и работаем.
 
-Оставить свою задачу → t.me/ВАШ_БОТ?start=tg_channel_post2
+Оставить свою задачу → t.me/studario1_bot?start=tg_channel_post2
 ```
 
 ---
@@ -226,7 +226,7 @@ t.me/ВАШ_БОТ?start=avito_ad5
 — кому нужно быстрое качественное решение
 
 Как оставить задачу:
-→ t.me/ВАШ_БОТ?start=tg_channel_story1
+→ t.me/studario1_bot?start=tg_channel_story1
 
 Всё через бот: удобно, быстро, с фиксированной ценой.
 ```
@@ -400,7 +400,7 @@ t.me/ВАШ_БОТ?start=avito_ad5
 
 - [ ] Все 10 deeplink'ов создал и записал в таблицу (source, campaign, площадка, дата)
 - [ ] Ни одна ссылка не дублируется (разные campaign_id для разных объявлений)
-- [ ] Проверил каждую ссылку: `t.me/ВАШ_БОТ?start=avito_ad1` — открывается и бот отвечает
+- [ ] Проверил каждую ссылку: `t.me/studario1_bot?start=avito_ad1` — открывается и бот отвечает
 
 ### Бот работает
 
@@ -439,7 +439,7 @@ t.me/ВАШ_БОТ?start=avito_ad5
 
 ## Быстрый старт: что делать прямо сейчас
 
-1. Скопируй 5 текстов объявлений (раздел 2.1), подставь реальную ссылку вместо `ВАШ_БОТ`
+1. Скопируй 5 текстов объявлений (раздел 2.1), ссылки уже с реальным именем `studario1_bot`
 2. Размести на Авито с разными campaign_id (`avito_ad1`...`avito_ad5`)
 3. Опубликуй пост 1 в Telegram-канале
 4. Запиши все ссылки в таблицу
