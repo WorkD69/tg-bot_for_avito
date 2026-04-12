@@ -15,7 +15,54 @@ from app.repositories.order_repo import OrderRepo
 router = Router()
 
 MAX_FILES = 10
+MAX_COMMENT_LEN = 2000
+MAX_BUDGET = Decimal("1_000_000")
 MSK = timezone(timedelta(hours=3))
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _parse_budget(raw: str) -> Decimal:
+    """Parse budget string → Decimal. Raises ValueError/InvalidOperation on bad input.
+
+    Accepted:
+      "1500", "1500.50", "1 500", "1,500", "1500р", "1500руб", "1500₽"
+    Rejected:
+      empty string, negative, zero, > MAX_BUDGET, pure text
+    """
+    cleaned = (
+        raw.strip()
+        .replace(" ", "")
+        .replace(",", ".")
+        .rstrip("рРрубРУБ₽")
+        .strip(".")
+    )
+    if not cleaned:
+        raise ValueError("empty")
+    amount = Decimal(cleaned)
+    if amount <= 0:
+        raise ValueError("non-positive")
+    if amount > MAX_BUDGET:
+        raise ValueError("too-large")
+    return amount
+
+
+def _parse_deadline(raw: str):
+    """Parse date string → date. Raises descriptive exceptions on bad input.
+
+    Returns (date, None) on success.
+    Raises ValueError("format") if string cannot be parsed as DD.MM.YYYY.
+    Raises ValueError("past") if the date is in the past.
+    """
+    text = raw.strip()
+    try:
+        deadline = datetime.strptime(text, "%d.%m.%Y").date()
+    except ValueError:
+        raise ValueError("format")
+    today = datetime.now(MSK).date()
+    if deadline < today:
+        raise ValueError("past")
+    return deadline
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
@@ -76,25 +123,71 @@ async def files_done(message: Message, state: FSMContext):
     await _ask_comment(message, state)
 
 
+@router.message(OrderCreateStates.waiting_files, F.text)
+async def files_unexpected_text(message: Message):
+    """User typed text instead of sending a file."""
+    await message.answer(
+        "📎 Отправьте файл (фото или документ) с заданием\n"
+        "Когда закончите — напишите /done"
+    )
+
+
+@router.message(OrderCreateStates.waiting_files)
+async def files_unexpected_type(message: Message):
+    """User sent sticker, voice, video, etc. — unsupported at this step."""
+    await message.answer(
+        "⚠️ Поддерживаются только фото и документы\n"
+        "Отправьте файл нужного типа или /done чтобы продолжить"
+    )
+
+
 async def _ask_comment(message: Message, state: FSMContext):
     await state.set_state(OrderCreateStates.waiting_comment)
-    await message.answer("💬 Добавьте комментарий к заданию (или отправьте «-» если нет):")
+    await message.answer(
+        "💬 Добавьте комментарий к заданию\n"
+        f"Максимум {MAX_COMMENT_LEN} символов\n"
+        "Если комментария нет — отправьте «-»"
+    )
 
 
 # ── Step 2: comment ───────────────────────────────────────────────────────────
 
 @router.message(OrderCreateStates.waiting_comment, F.text)
 async def got_comment(message: Message, state: FSMContext):
-    from datetime import datetime, timezone as tz
     raw = message.text.strip()
     if raw == "-":
         comment = None
+    elif not raw:
+        await message.answer(
+            "⚠️ Комментарий не может быть пустым\n"
+            "Напишите текст или отправьте «-» если комментария нет"
+        )
+        return
+    elif len(raw) > MAX_COMMENT_LEN:
+        await message.answer(
+            f"❌ Слишком длинный комментарий ({len(raw)} символов)\n"
+            f"Максимум {MAX_COMMENT_LEN} символов — сократите текст"
+        )
+        return
     else:
+        from datetime import timezone as tz
         ts = datetime.now(tz.utc).isoformat()
         comment = f"{ts}|{raw}"
     await state.update_data(comment=comment)
     await state.set_state(OrderCreateStates.waiting_deadline)
-    await message.answer("📅 Укажите дедлайн в формате ДД.ММ.ГГГГ:")
+    await message.answer(
+        "📅 Укажите дедлайн в формате ДД.ММ.ГГГГ\n"
+        "Например: 25.05.2026 — дата должна быть сегодня или позже"
+    )
+
+
+@router.message(OrderCreateStates.waiting_comment)
+async def comment_unexpected_type(message: Message):
+    """User sent a file or other non-text at the comment step."""
+    await message.answer(
+        "✏️ Введите комментарий текстом\n"
+        "Если комментария нет — отправьте «-»"
+    )
 
 
 # ── Step 3: deadline ──────────────────────────────────────────────────────────
@@ -102,23 +195,38 @@ async def got_comment(message: Message, state: FSMContext):
 @router.message(OrderCreateStates.waiting_deadline, F.text)
 async def got_deadline(message: Message, state: FSMContext):
     try:
-        deadline = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
-    except ValueError:
-        await message.answer(
-            "❌ Некорректный формат даты\n"
-            "Введите дату в формате ДД.ММ.ГГГГ, не предшествующую текущей"
-        )
-        return
-    today = datetime.now(MSK).date()
-    if deadline < today:
-        await message.answer(
-            "❌ Некорректный формат даты\n"
-            "Введите дату в формате ДД.ММ.ГГГГ, не предшествующую текущей"
-        )
+        deadline = _parse_deadline(message.text)
+    except ValueError as e:
+        reason = str(e)
+        if reason == "format":
+            await message.answer(
+                "❌ Не могу распознать дату — проверьте формат\n\n"
+                "Нужно: ДД.ММ.ГГГГ\n"
+                "Пример: 25.05.2026"
+            )
+        elif reason == "past":
+            await message.answer(
+                "❌ Эта дата уже прошла\n"
+                "Укажите сегодняшнюю дату или любую будущую в формате ДД.ММ.ГГГГ"
+            )
+        else:
+            await message.answer("❌ Некорректная дата — введите в формате ДД.ММ.ГГГГ")
         return
     await state.update_data(deadline=deadline.isoformat())
     await state.set_state(OrderCreateStates.waiting_budget)
-    await message.answer("💰 Укажите желаемый бюджет (число в рублях):")
+    await message.answer(
+        "💰 Укажите желаемый бюджет в рублях\n"
+        "Например: 1500 или 2000"
+    )
+
+
+@router.message(OrderCreateStates.waiting_deadline)
+async def deadline_unexpected_type(message: Message):
+    """User sent a file or other non-text at the deadline step."""
+    await message.answer(
+        "📅 Введите дату текстом в формате ДД.ММ.ГГГГ\n"
+        "Например: 25.05.2026"
+    )
 
 
 # ── Step 4: budget → create order ─────────────────────────────────────────────
@@ -128,11 +236,19 @@ async def got_budget(
     message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list
 ):
     try:
-        budget = Decimal(message.text.strip().replace(",", "."))
-        if budget <= 0:
-            raise ValueError
-    except (ValueError, InvalidOperation):
-        await message.answer("❌ Введите положительное число, например 1500:")
+        budget = _parse_budget(message.text)
+    except (InvalidOperation, ValueError) as e:
+        reason = str(e)
+        if reason == "too-large":
+            await message.answer(
+                f"❌ Слишком большая сумма — максимум {MAX_BUDGET:,.0f} ₽\n"
+                "Введите реальный бюджет цифрами"
+            )
+        else:
+            await message.answer(
+                "❌ Введите сумму числом в рублях\n"
+                "Например: 1500 или 2000"
+            )
         return
 
     data = await state.get_data()
@@ -179,4 +295,13 @@ async def got_budget(
         "🎉 Ваша заявка создана! Ожидайте, пока операторы возьмут её в работу\n\n"
         "📋 Статус заявки вы можете посмотреть в разделе «Текущие заявки»",
         reply_markup=client_main_kb(),
+    )
+
+
+@router.message(OrderCreateStates.waiting_budget)
+async def budget_unexpected_type(message: Message):
+    """User sent a file or other non-text at the budget step."""
+    await message.answer(
+        "💰 Введите бюджет числом в рублях\n"
+        "Например: 1500"
     )

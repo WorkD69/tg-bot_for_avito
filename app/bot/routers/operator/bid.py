@@ -64,12 +64,22 @@ async def start_bid(
 async def got_bid_price(
     message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list
 ):
+    raw = (
+        message.text.strip()
+        .replace(" ", "")
+        .replace(",", ".")
+        .rstrip("рРрубРУБ₽")
+        .strip(".")
+    )
     try:
-        amount = Decimal(message.text.strip().replace(",", "."))
+        amount = Decimal(raw)
         if amount <= 0:
             raise ValueError
     except (ValueError, InvalidOperation):
-        await message.answer("❌ Введите положительное число, например 1200:")
+        await message.answer(
+            "❌ Введите сумму числом в рублях\n"
+            "Например: 1200"
+        )
         return
 
     data = await state.get_data()
@@ -82,3 +92,12 @@ async def got_bid_price(
     # Pass post_commit so all notifications (including auto-close) fire after commit
     auction = AuctionService(session=session, bot=bot, deferred=post_commit)
     await auction.place_bid(order_id=order_id, operator_id=user.id, amount=amount)
+
+
+@router.message(BidStates.waiting_price, IsOperator())
+async def bid_unexpected_type(message: Message):
+    """Operator sent a file or other non-text at the bid step."""
+    await message.answer(
+        "💰 Введите сумму ставки числом в рублях\n"
+        "Например: 1200"
+    )

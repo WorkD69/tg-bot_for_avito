@@ -412,10 +412,26 @@ async def add_comment_start(
     await callback.answer()
 
 
+MAX_COMMENT_LEN = 2000
+
+
 @router.message(OrderEditStates.waiting_comment, F.text, IsClient())
 async def add_comment_done(
     message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list
 ):
+    raw = message.text.strip()
+    if not raw:
+        await message.answer(
+            "⚠️ Комментарий не может быть пустым\n"
+            "Введите текст или нажмите /cancel для отмены"
+        )
+        return
+    if len(raw) > MAX_COMMENT_LEN:
+        await message.answer(
+            f"❌ Слишком длинный комментарий ({len(raw)} символов)\n"
+            f"Максимум {MAX_COMMENT_LEN} символов — сократите текст"
+        )
+        return
     data = await state.get_data()
     order_id: int = data["order_id"]
     order_repo = OrderRepo(session)
@@ -430,7 +446,7 @@ async def add_comment_done(
         return
     from datetime import datetime, timezone as tz
     ts = datetime.now(tz.utc).isoformat()
-    new_entry = f"{ts}|{message.text.strip()}"
+    new_entry = f"{ts}|{raw}"
     order.comment = (order.comment + "\n---\n" + new_entry) if order.comment else new_entry
     await session.flush()
     await order_repo.add_log(
@@ -643,4 +659,34 @@ async def view_solution(
                 callback_data=OrderCB(order_id=order.id, action="back_history").pack(),
             )
         ]]),
+    )
+
+
+# ── Fallback handlers for non-text input in client FSM states ─────────────────
+
+@router.message(NegotiationStates.waiting_text, IsClient())
+async def negotiate_unexpected_type(message: Message):
+    """Client sent a file/sticker/voice instead of a negotiation message."""
+    await message.answer(
+        "💬 Напишите сообщение текстом\n"
+        "Например: «Готов оплатить 1200 ₽» или уточняющий вопрос\n"
+        "Для отмены — /cancel"
+    )
+
+
+@router.message(OrderEditStates.waiting_comment, IsClient())
+async def edit_comment_unexpected_type(message: Message):
+    """Client sent a file instead of a comment text."""
+    await message.answer(
+        "✏️ Введите комментарий текстом\n"
+        "Для отмены — /cancel"
+    )
+
+
+@router.message(OrderEditStates.waiting_files, IsClient())
+async def edit_files_unexpected_type(message: Message):
+    """Client sent an unsupported file type (video, voice, sticker, etc.)."""
+    await message.answer(
+        "⚠️ Поддерживаются только фото и документы\n"
+        "Отправьте файл нужного типа или /done чтобы завершить"
     )

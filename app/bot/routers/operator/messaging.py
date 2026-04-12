@@ -411,3 +411,32 @@ async def negot_cancel_order(
         f"❌ Заявка №{order.id} отменена оператором",
         reply_markup=group_new_order_kb(order.id),
     ))
+
+
+# ── Fallback handlers for non-text input in operator FSM states ───────────────
+
+@router.message(MessagingStates.waiting_message, IsOperator())
+async def operator_message_unexpected_type(message: Message):
+    """Operator sent a file/sticker/voice instead of a text message."""
+    await message.answer(
+        "✏️ Напишите сообщение текстом\n"
+        "Файлы в этом режиме не поддерживаются"
+    )
+
+
+@router.message(RequisitesStates.waiting_text, IsOperator())
+async def requisites_unexpected_type(message: Message):
+    """Operator sent a file instead of requisites text."""
+    await message.answer(
+        "💳 Отправьте реквизиты текстом\n"
+        "Например: «Карта Сбер: 1234 5678 9012 3456, получатель Иван И.»"
+    )
+
+
+@router.message(CounterOfferStates.waiting_amount, IsOperator())
+async def counter_offer_unexpected_type(message: Message):
+    """Operator sent a file instead of counter-offer amount."""
+    await message.answer(
+        "💰 Введите сумму числом\n"
+        "Например: «3700» или «3700 Минимальная стоимость работы»"
+    )
