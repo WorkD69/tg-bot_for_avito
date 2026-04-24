@@ -56,9 +56,9 @@ async def show_files(
     file_msg_ids: list[int] = []
     for f in order.files:
         if f.file_type == "photo":
-            sent = await callback.message.answer_photo(f.telegram_file_id)
+            sent = await callback.message.answer_photo(f.telegram_file_id, caption=f.caption or None)
         else:
-            sent = await callback.message.answer_document(f.telegram_file_id)
+            sent = await callback.message.answer_document(f.telegram_file_id, caption=f.caption or None)
         file_msg_ids.append(sent.message_id)
 
     # Store IDs in FSM so "← Назад" can delete them

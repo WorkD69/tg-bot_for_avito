@@ -4,9 +4,9 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.filters import IsClient
-from app.bot.keyboards.admin_inline import rating_kb, reviews_menu_kb
+from app.bot.keyboards.admin_inline import rating_kb
 from app.bot.keyboards.callbacks import OrderCB, RatingCB, ReviewListCB  # ReviewListCB kept for "all" handler
-from app.bot.keyboards.client_reply import BTN_REVIEWS, client_main_kb
+from app.bot.keyboards.client_reply import client_main_kb
 from app.bot.states.note import ReviewStates
 from app.config import settings
 from app.db.models.order import OrderStatus
@@ -15,11 +15,6 @@ from app.repositories.order_repo import OrderRepo
 from app.repositories.review_repo import ReviewRepo
 
 router = Router()
-
-
-@router.message(F.text == BTN_REVIEWS, IsClient())
-async def reviews_menu(message: Message):
-    await message.answer("⭐ Отзывы:", reply_markup=reviews_menu_kb())
 
 
 REVIEWS_PAGE_SIZE = 5

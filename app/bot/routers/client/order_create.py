@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.filters import IsClient
 from app.bot.keyboards.callbacks import OrderCB
-from app.bot.keyboards.client_reply import BTN_CREATE, client_main_kb
+from app.bot.keyboards.client_reply import client_main_kb
 from app.bot.states.order_create import OrderCreateStates
 from app.db.models.user import User
 from app.repositories.order_repo import OrderRepo
@@ -100,36 +100,6 @@ def _parse_deadline(raw: str):
     return deadline
 
 
-# ── Entry point ──────────────────────────────────────────────────────────────
-
-@router.message(F.text == BTN_CREATE, IsClient())
-async def start_order(message: Message, state: FSMContext, session: AsyncSession, user: User):
-    # Guard: don't interrupt an already-active FSM (e.g. file upload or comment edit)
-    current = await state.get_state()
-    if current is not None:
-        await message.answer(
-            "⚠️ Вы уже выполняете действие — завершите его или отмените через /cancel"
-        )
-        return
-
-    # Guard: check active order limit before starting the FSM
-    active_orders = await OrderRepo(session).get_client_active_orders(user.id)
-    if len(active_orders) >= 5:
-        await message.answer(
-            "❌ У вас уже 5 активных заявок\n"
-            "Дождитесь завершения одной из них, прежде чем создавать новую",
-            reply_markup=client_main_kb(),
-        )
-        return
-    await state.set_state(OrderCreateStates.waiting_files)
-    await state.update_data(files=[])
-    await message.answer(
-        "📎 Отправьте файлы с заданием (до 10 штук)\n"
-        "Когда закончите — отправьте /done\n"
-        "Для отмены — /cancel"
-    )
-
-
 # ── "Создать ещё заявку" from completed order card ───────────────────────────
 
 @router.callback_query(OrderCB.filter(F.action == "new_order"), IsClient())
@@ -179,7 +149,9 @@ async def collect_document(message: Message, state: FSMContext):
 async def _add_file(message: Message, state: FSMContext, file_id: str, file_type: str):
     data = await state.get_data()
     files: list = data.get("files", [])
-    files.append({"file_id": file_id, "file_type": file_type})
+    # Capture caption so operators see any note attached to the file
+    caption = message.caption or None
+    files.append({"file_id": file_id, "file_type": file_type, "caption": caption})
     await state.update_data(files=files)
     if len(files) >= MAX_FILES:
         await message.answer(f"✅ Достигнут лимит {MAX_FILES} файлов, переходим дальше")
@@ -295,7 +267,6 @@ async def got_deadline(message: Message, state: FSMContext):
     await message.answer(
         "💰 Укажите желаемый бюджет в рублях\n"
         "Например: 1500 или 2000\n\n"
-        "Это ваша стартовая сумма — операторы могут предложить меньше\n"
         "Для отмены — /cancel"
     )
 
@@ -363,10 +334,15 @@ async def got_budget(
         auction_end_at=auction_end_at,
     )
 
-    # Save attached files
+    # Save attached files (with caption if operator provided one inline)
     from app.db.models.order_file import OrderFile
     for f in data.get("files", []):
-        session.add(OrderFile(order_id=order.id, telegram_file_id=f["file_id"], file_type=f["file_type"]))
+        session.add(OrderFile(
+            order_id=order.id,
+            telegram_file_id=f["file_id"],
+            file_type=f["file_type"],
+            caption=f.get("caption") or None,
+        ))
 
     await state.clear()
 

@@ -16,5 +16,7 @@ class OrderFile(Base, TimestampMixin):
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), nullable=False, index=True)
     telegram_file_id: Mapped[str] = mapped_column(String(256), nullable=False)
     file_type: Mapped[str] = mapped_column(String(32), nullable=False)  # photo, document, etc.
+    # Caption attached by the client when sending this file (may be None)
+    caption: Mapped[str | None] = mapped_column(nullable=True)
 
     order: Mapped["Order"] = relationship("Order", back_populates="files")

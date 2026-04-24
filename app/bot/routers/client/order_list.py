@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot.filters import IsClient
 from app.config import settings
 from app.bot.formatters import format_client_card, format_client_history_card, _money
-from app.bot.keyboards.client_reply import BTN_CURRENT, BTN_HISTORY
 from app.bot.keyboards.order_inline import (
     cancel_confirm_kb,
     client_active_order_kb,
@@ -35,24 +34,6 @@ def _requisites_sent(order) -> bool:
     Used to guard the 'Я оплатил' button so it only appears after requisites arrive.
     """
     return any(log.action == OrderLogAction.requisites_sent for log in (order.logs or []))
-
-
-@router.message(F.text == BTN_CURRENT, IsClient())
-async def current_orders(message: Message, session: AsyncSession, user: User):
-    orders = await OrderRepo(session).get_client_active_orders(user.id)
-    if not orders:
-        await message.answer("📭 У вас нет активных заявок")
-        return
-    await message.answer("📋 Ваши текущие заявки:", reply_markup=client_orders_list_kb(orders))
-
-
-@router.message(F.text == BTN_HISTORY, IsClient())
-async def history_orders(message: Message, session: AsyncSession, user: User):
-    orders = await OrderRepo(session).get_client_history(user.id)
-    if not orders:
-        await message.answer("📭 История заявок пуста")
-        return
-    await message.answer("🗂 История заявок:", reply_markup=client_orders_list_kb(orders))
 
 
 @router.callback_query(OrderCB.filter(F.action == "client_view"), IsClient())
@@ -544,7 +525,14 @@ async def _save_file(message: Message, state: FSMContext, session: AsyncSession,
     if current_count >= MAX_FILES:
         await message.answer(f"⚠️ Достигнут лимит {MAX_FILES} файлов — отправьте /done")
         return
-    session.add(OrderFile(order_id=order_id, telegram_file_id=file_id, file_type=file_type))
+    # Capture caption so operators see any note attached to the file
+    caption = message.caption or None
+    session.add(OrderFile(
+        order_id=order_id,
+        telegram_file_id=file_id,
+        file_type=file_type,
+        caption=caption,
+    ))
     await session.flush()
     data = await state.get_data()
     files_added = data.get("files_added", 0) + 1
@@ -662,19 +650,33 @@ async def view_solution(
     await callback.message.answer(f"📎 Решение по заявке №{order.id}:")
     for sf in order.solution_files:
         if sf.file_type == "photo":
-            await callback.message.answer_photo(sf.telegram_file_id)
+            await callback.message.answer_photo(sf.telegram_file_id, caption=sf.caption or None)
         else:
-            await callback.message.answer_document(sf.telegram_file_id)
+            await callback.message.answer_document(sf.telegram_file_id, caption=sf.caption or None)
 
+    # Show review CTA only if client hasn't reviewed this order yet.
+    # Placed inline on the navigation message — no extra message, no spam.
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from app.repositories.review_repo import ReviewRepo
+    existing_review = await ReviewRepo(session).get_by_order_client(order.id, user.id)
+
+    nav_rows = [[
+        InlineKeyboardButton(
+            text="← История заявок",
+            callback_data=OrderCB(order_id=order.id, action="back_history").pack(),
+        )
+    ]]
+    if existing_review is None:
+        nav_rows.append([
+            InlineKeyboardButton(
+                text="⭐ Оставить отзыв",
+                callback_data=OrderCB(order_id=order.id, action="review").pack(),
+            )
+        ])
+
     await callback.message.answer(
         "⬆️ Файлы выше",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(
-                text="← История заявок",
-                callback_data=OrderCB(order_id=order.id, action="back_history").pack(),
-            )
-        ]]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=nav_rows),
     )
 
 

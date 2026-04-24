@@ -98,20 +98,34 @@ async def start_solution(
 
 @router.message(SolutionStates.waiting_files, F.photo, IsOperator())
 async def solution_photo(message: Message, state: FSMContext):
-    await _add_solution_file(message, state, file_id=message.photo[-1].file_id, file_type="photo")
+    await _add_solution_file(
+        message, state,
+        file_id=message.photo[-1].file_id,
+        file_type="photo",
+        caption=message.caption,
+    )
 
 
 @router.message(SolutionStates.waiting_files, F.document, IsOperator())
 async def solution_document(message: Message, state: FSMContext):
-    await _add_solution_file(message, state, file_id=message.document.file_id, file_type="document")
+    await _add_solution_file(
+        message, state,
+        file_id=message.document.file_id,
+        file_type="document",
+        caption=message.caption,
+    )
 
 
-async def _add_solution_file(message: Message, state: FSMContext, file_id: str, file_type: str):
+async def _add_solution_file(
+    message: Message, state: FSMContext, file_id: str, file_type: str, caption: str | None = None
+):
     data = await state.get_data()
     files: list = data.get("files", [])
-    files.append({"file_id": file_id, "file_type": file_type})
+    # Store caption alongside file so it can be saved to DB and shown to client
+    files.append({"file_id": file_id, "file_type": file_type, "caption": caption or ""})
     await state.update_data(files=files)
-    await message.answer(f"✅ Файл принят ({len(files)} шт.) — ещё или /done")
+    caption_hint = " (подпись сохранена)" if caption else ""
+    await message.answer(f"✅ Файл принят ({len(files)} шт.){caption_hint} — ещё или /done")
 
 
 @router.message(SolutionStates.waiting_files, F.text == "/done", IsOperator())
@@ -139,6 +153,7 @@ async def solution_done(message: Message, state: FSMContext, session: AsyncSessi
             order_id=order_id,
             telegram_file_id=f["file_id"],
             file_type=f["file_type"],
+            caption=f.get("caption") or None,
         ))
 
     # Mark solution uploaded and auto-complete the order

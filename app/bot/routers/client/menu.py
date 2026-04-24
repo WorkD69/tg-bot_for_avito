@@ -2,8 +2,16 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.keyboards.client_reply import BTN_CREATE, BTN_HOW, client_main_kb
+from app.bot.keyboards.client_reply import (
+    BTN_CREATE,
+    BTN_CURRENT,
+    BTN_HISTORY,
+    BTN_HOW,
+    BTN_REVIEWS,
+    client_main_kb,
+)
 from app.bot.keyboards.operator_reply import operator_dm_kb
 from app.bot.filters import IsClient
 from app.bot.middlewares.user_register import _parse_start_payload
@@ -12,10 +20,6 @@ from app.db.models.user import User, UserRole
 router = Router()
 
 # ── Welcome text by source ────────────────────────────────────────────────────
-# Shown on /start when a deeplink payload with a known source is present.
-# Also shown on first /start for new users (is_new_user=True) even without payload.
-# Keyed by users.source value. Falls back to _WELCOME_DEFAULT for unknown/direct.
-# To add a new source: add an entry here and in KNOWN_SOURCES in user.py.
 _WELCOME_BY_SOURCE: dict[str, str] = {
     "avito": (
         "👋 Привет, {name}! Нашли нас на Авито — отлично\n\n"
@@ -31,10 +35,6 @@ _WELCOME_DEFAULT = "👋 Привет, {name}! Здесь вы можете ос
 
 
 def _extract_payload_source(message: Message) -> str | None:
-    """Parse /start deeplink payload and return source if it's a known marketing source.
-
-    Returns None for plain /start, unknown, or direct sources.
-    """
     text = message.text or ""
     parts = text.strip().split(maxsplit=1)
     if len(parts) == 2 and parts[0] == "/start":
@@ -45,13 +45,6 @@ def _extract_payload_source(message: Message) -> str | None:
 
 
 def _welcome_text(user: User, is_new_user: bool, payload_source: str | None = None) -> str:
-    """Return appropriate welcome text.
-
-    Priority:
-    1. payload_source — deeplink source from current /start (avito, tg_channel, etc.)
-    2. user.source — stored source, used only on first visit (is_new_user=True)
-    3. Default — plain welcome without source mention
-    """
     source = payload_source or (user.source if is_new_user else None)
     if source:
         template = _WELCOME_BY_SOURCE.get(source, _WELCOME_DEFAULT)
@@ -60,7 +53,6 @@ def _welcome_text(user: User, is_new_user: bool, payload_source: str | None = No
 
 
 def _main_kb(user: User):
-    """Return the correct main keyboard for the user's role."""
     if user.role in (UserRole.operator, UserRole.admin):
         return operator_dm_kb()
     return client_main_kb()
@@ -81,10 +73,85 @@ def _how_it_works_text() -> str:
     )
 
 
+# ── MAIN MENU BUTTONS — registered first so they always win over FSM handlers ──
+#
+# All five handlers call state.clear() unconditionally — this is a no-op when no
+# FSM is active, so it's always safe. No "action cancelled" message is shown to
+# avoid polluting the chat; the transition to the new section is enough feedback.
+
 @router.message(F.text == BTN_HOW, IsClient())
-async def how_it_works(message: Message):
+async def how_it_works(message: Message, state: FSMContext):
+    await state.clear()
     await message.answer(_how_it_works_text())
 
+
+@router.message(F.text == BTN_CREATE, IsClient())
+async def menu_create_order(message: Message, state: FSMContext, session: AsyncSession, user: User):
+    """'Создать заявку' always starts (or restarts) order creation.
+
+    If FSM is already active it is cleared silently — the user pressed the button
+    intentionally, so restarting is the correct action. No blocking message.
+    """
+    await state.clear()
+
+    from app.repositories.order_repo import OrderRepo
+    active_orders = await OrderRepo(session).get_client_active_orders(user.id)
+    if len(active_orders) >= 5:
+        await message.answer(
+            "❌ У вас уже 5 активных заявок\n"
+            "Дождитесь завершения одной из них, прежде чем создавать новую",
+            reply_markup=client_main_kb(),
+        )
+        return
+
+    from app.bot.states.order_create import OrderCreateStates
+    await state.set_state(OrderCreateStates.waiting_files)
+    await state.update_data(files=[])
+    await message.answer(
+        "📎 Отправьте файлы с заданием (до 10 штук)\n"
+        "Когда закончите — отправьте /done\n"
+        "Для отмены — /cancel"
+    )
+
+
+@router.message(F.text == BTN_CURRENT, IsClient())
+async def menu_current_orders(message: Message, state: FSMContext, session: AsyncSession, user: User):
+    """'Текущие заявки' — always works, auto-clears active FSM."""
+    await state.clear()
+
+    from app.repositories.order_repo import OrderRepo
+    from app.bot.keyboards.order_inline import client_orders_list_kb
+    orders = await OrderRepo(session).get_client_active_orders(user.id)
+    if not orders:
+        await message.answer("📭 У вас нет активных заявок")
+        return
+    await message.answer("📋 Ваши текущие заявки:", reply_markup=client_orders_list_kb(orders))
+
+
+@router.message(F.text == BTN_HISTORY, IsClient())
+async def menu_history_orders(message: Message, state: FSMContext, session: AsyncSession, user: User):
+    """'История заявок' — always works, auto-clears active FSM."""
+    await state.clear()
+
+    from app.repositories.order_repo import OrderRepo
+    from app.bot.keyboards.order_inline import client_orders_list_kb
+    orders = await OrderRepo(session).get_client_history(user.id)
+    if not orders:
+        await message.answer("📭 История заявок пуста")
+        return
+    await message.answer("🗂 История заявок:", reply_markup=client_orders_list_kb(orders))
+
+
+@router.message(F.text == BTN_REVIEWS, IsClient())
+async def menu_reviews(message: Message, state: FSMContext):
+    """'Отзывы' — always works, auto-clears active FSM."""
+    await state.clear()
+
+    from app.bot.keyboards.admin_inline import reviews_menu_kb
+    await message.answer("⭐ Отзывы:", reply_markup=reviews_menu_kb())
+
+
+# ── /cancel ───────────────────────────────────────────────────────────────────
 
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext, user: User):
@@ -97,17 +164,18 @@ async def cmd_cancel(message: Message, state: FSMContext, user: User):
     await message.answer("✅ Действие отменено", reply_markup=_main_kb(user))
 
 
+# ── /start ────────────────────────────────────────────────────────────────────
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, user: User, state: FSMContext, is_new_user: bool = False):
     current = await state.get_state()
-    await state.clear()  # clear any active FSM state on /start
+    await state.clear()
     if current is not None:
         await message.answer(
             "ℹ️ Незавершённое действие отменено\n"
             "Используйте /cancel в любое время чтобы прервать текущее действие"
         )
 
-    # Detect marketing source from current deeplink payload (works for all users, incl. existing)
     payload_source = _extract_payload_source(message)
 
     if user.role in (UserRole.operator, UserRole.admin):
