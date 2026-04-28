@@ -162,8 +162,13 @@ async def remind_unconfirmed_payments() -> None:
             f"  • №{o.id} — {_money(o.payment_amount)} — /confirmpayment {o.id}"
         )
 
+    from app.db.models.user import UserRole
+    from app.repositories.user_repo import UserRepo
     try:
-        await bot.send_message(settings.admin_telegram_id, "\n".join(lines))
-        logger.info("remind_unconfirmed_payments: notified admin, %d orders", len(orders))
+        async with AsyncSessionFactory() as _s:
+            admins = await UserRepo(_s).get_by_role(UserRole.admin)
+        for admin in admins:
+            await bot.send_message(admin.telegram_id, "\n".join(lines))
+        logger.info("remind_unconfirmed_payments: notified %d admins, %d orders", len(admins), len(orders))
     except Exception:
-        logger.exception("remind_unconfirmed_payments: failed to notify admin")
+        logger.exception("remind_unconfirmed_payments: failed to notify admins")

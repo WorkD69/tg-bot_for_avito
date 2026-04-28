@@ -277,12 +277,15 @@ async def client_paid(
 
     # Admin notification deferred — fires after commit
     from app.bot.instance import bot as _bot
-    post_commit.append(_bot.send_message(
-        settings.admin_telegram_id,
+    from app.db.models.user import UserRole
+    from app.repositories.user_repo import UserRepo as _UserRepo
+    _notify_text = (
         f"💳 Клиент сообщил об оплате заявки №{order.id}\n"
         f"Сумма: {_money(order.payment_amount)}\n"
-        f"Подтвердить: /confirmpayment {order.id}",
-    ))
+        f"Подтвердить: /confirmpayment {order.id}"
+    )
+    for _admin in await _UserRepo(session).get_by_role(UserRole.admin):
+        post_commit.append(_bot.send_message(_admin.telegram_id, _notify_text))
 
     from app.config import settings as _cfg
     await callback.message.answer(
@@ -612,12 +615,15 @@ async def client_dispute(
     )
 
     from app.bot.instance import bot as _bot
+    from app.db.models.user import UserRole
+    from app.repositories.user_repo import UserRepo as _UserRepo
     client_name = f"@{user.username}" if user.username else user.full_name
-    post_commit.append(_bot.send_message(
-        settings.admin_telegram_id,
+    _dispute_text = (
         f"⚠️ Клиент {client_name} оспаривает результат по заявке №{order.id}\n"
-        f"Свяжитесь с клиентом и рассмотрите заявку",
-    ))
+        f"Свяжитесь с клиентом и рассмотрите заявку"
+    )
+    for _admin in await _UserRepo(session).get_by_role(UserRole.admin):
+        post_commit.append(_bot.send_message(_admin.telegram_id, _dispute_text))
 
     from app.config import settings as _cfg
     await callback.message.answer(

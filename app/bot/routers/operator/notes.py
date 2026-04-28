@@ -260,11 +260,14 @@ async def cant_do_order(
     from app.repositories.user_repo import UserRepo
 
     # Notify admin — deferred after commit
-    post_commit.append(bot.send_message(
-        settings.admin_telegram_id,
+    from app.db.models.user import UserRole
+    from app.repositories.user_repo import UserRepo as _UserRepo
+    _note_text = (
         f"⚠️ Оператор {user.full_name} сообщает, что не может выполнить заявку №{order.id}\n"
-        f"Для отмены: /cancelorder {order.id}",
-    ))
+        f"Для отмены: /cancelorder {order.id}"
+    )
+    for _admin in await _UserRepo(session).get_by_role(UserRole.admin):
+        post_commit.append(bot.send_message(_admin.telegram_id, _note_text))
 
     # Notify client — deferred after commit
     client = await UserRepo(session).get_by_id(order.client_id)

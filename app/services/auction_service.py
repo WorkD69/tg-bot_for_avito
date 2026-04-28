@@ -217,10 +217,12 @@ class AuctionService:
                     f"😔 К сожалению, по вашей заявке №{order_id} не поступило ни одной ставки\n"
                     "Попробуйте создать новую заявку",
                 ))
-            self._defer(self.bot.send_message(
-                settings.admin_telegram_id,
-                f"⚠️ Заявка №{order_id} отменена — нет ставок за 120 мин",
-            ))
+            from app.db.models.user import UserRole
+            for _admin in await UserRepo(self.session).get_by_role(UserRole.admin):
+                self._defer(self.bot.send_message(
+                    _admin.telegram_id,
+                    f"⚠️ Заявка №{order_id} отменена — нет ставок за 120 мин",
+                ))
             logger.info("Order #%d cancelled — no bids", order_id)
             return AuctionCloseResult.cancelled_no_bids
 

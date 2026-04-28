@@ -112,12 +112,17 @@ async def robokassa_callback(
     # Notify admin AFTER commit — so admin sees a committed state
     if admin_notify_text and admin_notify_order_id is not None:
         from app.bot.instance import bot
-        from app.config import settings
+        from app.db.engine import AsyncSessionFactory
+        from app.db.models.user import UserRole
+        from app.repositories.user_repo import UserRepo
         try:
-            await bot.send_message(settings.admin_telegram_id, admin_notify_text)
+            async with AsyncSessionFactory() as _s:
+                admins = await UserRepo(_s).get_by_role(UserRole.admin)
+            for admin in admins:
+                await bot.send_message(admin.telegram_id, admin_notify_text)
         except Exception:
             logger.exception(
-                "Robokassa: failed to notify admin for order #%d", admin_notify_order_id
+                "Robokassa: failed to notify admins for order #%d", admin_notify_order_id
             )
 
     # Robokassa requires exactly this string

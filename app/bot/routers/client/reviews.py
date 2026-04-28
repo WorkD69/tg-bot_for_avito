@@ -121,11 +121,13 @@ async def got_review_text(
         admin_text = (
             f"📝 Новый отзыв от {client_name} по заявке №{order_id} ({stars}):\n\n{review.text}"
         )
-        post_commit.append(bot.send_message(
-            settings.admin_telegram_id,
-            admin_text,
-            reply_markup=review_moderation_kb(review.id),
-        ))
+        from app.repositories.user_repo import UserRepo as _UserRepo
+        for _admin in await _UserRepo(session).get_by_role(UserRole.admin):
+            post_commit.append(bot.send_message(
+                _admin.telegram_id,
+                admin_text,
+                reply_markup=review_moderation_kb(review.id),
+            ))
         await message.answer("🙏 Спасибо за обратную связь!", reply_markup=reply_kb)
 
         # Avito nudge: clients who came from Avito are likely registered there —
