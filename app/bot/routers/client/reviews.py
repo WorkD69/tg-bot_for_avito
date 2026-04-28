@@ -130,13 +130,19 @@ async def got_review_text(
             ))
         await message.answer("🙏 Спасибо за обратную связь!", reply_markup=reply_kb)
 
-        # Avito nudge: clients who came from Avito are likely registered there —
-        # a review on Avito strengthens the listing that brought them in.
-        # Only shown when avito_profile_url is configured in settings.
-        if user.source == "avito" and settings.avito_profile_url:
+        # Avito nudge — shown to all happy clients (rating >= 4) when url is configured.
+        # Anyone with an Avito account can leave a review, not just those who came from Avito.
+        if settings.avito_profile_url and rating >= 4:
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            avito_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="⭐ Оставить отзыв на Авито",
+                    url=settings.avito_profile_url,
+                )
+            ]])
             await message.answer(
-                f"⭐ Если вам не сложно — оставьте также оценку на Авито, это помогает другим "
-                f"клиентам найти нас:\n{settings.avito_profile_url}"
+                "Если не сложно — оставьте отзыв на Авито, это очень помогает нам 🙏",
+                reply_markup=avito_kb,
             )
     else:
         # Duplicate submit — no new admin alert

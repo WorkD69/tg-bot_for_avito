@@ -205,13 +205,24 @@ async def solution_done(message: Message, state: FSMContext, session: AsyncSessi
 
     from app.bot.instance import bot
     from app.repositories.user_repo import UserRepo
+    from app.config import settings as _settings
     client = await UserRepo(session).get_by_id(order.client_id)
     if client:
         comment_line = f"\n\n💬 Комментарий оператора:\n{comment}" if comment else ""
+        avito_kb = None
+        if _settings.avito_profile_url:
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            avito_kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="⭐ Оставить отзыв на Авито",
+                    url=_settings.avito_profile_url,
+                )
+            ]])
         post_commit.append(bot.send_message(
             client.telegram_id,
             f"🎉 Заявка №{order_id} выполнена!{comment_line}\n\n"
             "📂 Посмотрите в разделе «История заявок»",
+            reply_markup=avito_kb,
         ))
 
     # Schedule follow-up message to client 24h after completion
