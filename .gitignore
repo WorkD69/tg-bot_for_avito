@@ -22,6 +22,14 @@ tmp/
 # OS
 .DS_Store
 Thumbs.db
+*.lnk
+
+# Browser automation artifacts
+.playwright-mcp/
+
+# Root-level screenshots and temp scripts
+/*.png
+tmp_ssh*.py
 
 # pip shell redirect artefacts (Windows: pip install "pkg>=x.x" misparses as file redirect)
 =*
