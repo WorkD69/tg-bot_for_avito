@@ -218,10 +218,15 @@ async def solution_done(message: Message, state: FSMContext, session: AsyncSessi
                     url=_settings.avito_profile_url,
                 )
             ]])
+        avito_text = (
+            "\n\n🙏 Нам очень важно ваше мнение — если остались довольны, "
+            "оставьте, пожалуйста, отзыв на Авито. Это занимает минуту, "
+            "но для нас значит очень много"
+        ) if avito_kb else ""
         post_commit.append(bot.send_message(
             client.telegram_id,
             f"🎉 Заявка №{order_id} выполнена!{comment_line}\n\n"
-            "📂 Посмотрите в разделе «История заявок»",
+            f"📂 Посмотрите в разделе «История заявок»{avito_text}",
             reply_markup=avito_kb,
         ))
 
