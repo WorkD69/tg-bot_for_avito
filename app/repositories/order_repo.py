@@ -36,6 +36,8 @@ class OrderRepo:
         deadline: date | None,
         budget: Decimal | None,
         auction_end_at: datetime,
+        applied_promo: str | None = None,
+        discount_percent: Decimal | None = None,
     ) -> Order:
         order = Order(
             client_id=client_id,
@@ -44,6 +46,8 @@ class OrderRepo:
             budget=budget,
             auction_end_at=auction_end_at,
             status=OrderStatus.pending,
+            applied_promo=applied_promo,
+            discount_percent=discount_percent,
         )
         self.session.add(order)
         await self.session.flush()

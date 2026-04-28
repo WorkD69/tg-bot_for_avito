@@ -81,7 +81,15 @@ def format_order_card(order: Order, is_admin: bool = False, viewer_id: int | Non
         lines.append(f"Сбор цен до: {auction_end} МСК")
 
     if order.payment_amount and order.status != OrderStatus.pending:
-        lines.append(f"Согласованная сумма: {_money(order.payment_amount)}")
+        from app.services.payment_service import PaymentService
+        pay = PaymentService.client_amount(order)
+        if order.discount_percent:
+            lines.append(
+                f"Согласованная сумма: {_money(order.payment_amount)} "
+                f"(клиент платит {_money(pay)} — промокод {order.applied_promo} {order.discount_percent:.0f}%)"
+            )
+        else:
+            lines.append(f"Согласованная сумма: {_money(order.payment_amount)}")
 
     lines.append("Ставки операторов:")
     if order.bids:
@@ -141,7 +149,15 @@ def format_client_card(order: Order) -> str:
     ]
 
     if order.payment_amount and order.status == OrderStatus.awaiting_payment:
-        lines.append(f"💳 Сумма к оплате: {_money(order.payment_amount)}")
+        from app.services.payment_service import PaymentService
+        pay = PaymentService.client_amount(order)
+        if order.discount_percent:
+            lines.append(
+                f"💳 Сумма к оплате: {_money(pay)} "
+                f"(скидка {order.discount_percent:.0f}% по промокоду {order.applied_promo})"
+            )
+        else:
+            lines.append(f"💳 Сумма к оплате: {_money(pay)}")
 
     files_count = len(order.files) if order.files else 0
     if files_count:
@@ -181,7 +197,15 @@ def format_client_history_card(order: Order) -> str:
     ]
 
     if order.payment_amount:
-        lines.append(f"💳 Итоговая сумма: {_money(order.payment_amount)}")
+        from app.services.payment_service import PaymentService
+        pay = PaymentService.client_amount(order)
+        if order.discount_percent:
+            lines.append(
+                f"💳 Итоговая сумма: {_money(pay)} "
+                f"(скидка {order.discount_percent:.0f}% по промокоду {order.applied_promo})"
+            )
+        else:
+            lines.append(f"💳 Итоговая сумма: {_money(pay)}")
 
     files_count = len(order.files) if order.files else 0
     if files_count:

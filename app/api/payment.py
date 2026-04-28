@@ -67,14 +67,16 @@ async def robokassa_callback(
                 )
                 return PlainTextResponse(f"OK{InvId}")
 
-            # Verify amount matches expected payment_amount
+            # Verify amount matches expected client payment (may differ from payment_amount if promo applied)
             try:
                 from decimal import Decimal
+                from app.services.payment_service import PaymentService
                 received = Decimal(OutSum)
-                if order.payment_amount and abs(received - order.payment_amount) > Decimal("0.01"):
+                expected = PaymentService.client_amount(order)
+                if expected and abs(received - expected) > Decimal("0.01"):
                     logger.warning(
                         "Robokassa: amount mismatch for order #%s: expected %s got %s",
-                        order.id, order.payment_amount, OutSum,
+                        order.id, expected, OutSum,
                     )
                     return PlainTextResponse("amount mismatch", status_code=400)
             except Exception:

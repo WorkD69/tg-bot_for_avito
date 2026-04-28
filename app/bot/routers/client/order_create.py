@@ -320,9 +320,86 @@ async def got_budget(
         )
         return
 
+    await state.update_data(budget=str(budget))
+    await state.set_state(OrderCreateStates.waiting_promo)
+    from aiogram.types import KeyboardButton, ReplyKeyboardMarkup
+    skip_kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Пропустить →")]],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+    await message.answer(
+        "🎟 Есть промокод? Введите его или нажмите «Пропустить»\n"
+        "Для отмены — /cancel",
+        reply_markup=skip_kb,
+    )
+
+
+@router.message(OrderCreateStates.waiting_promo, F.text)
+async def got_promo(
+    message: Message, state: FSMContext, session: AsyncSession, user: User, post_commit: list
+):
+    raw = message.text.strip()
+    promo_code: str | None = None
+    discount_percent = None
+
+    if raw != "Пропустить →":
+        from app.repositories.promo_repo import PromoRepo
+        promo = await PromoRepo(session).get_active(raw)
+        if promo is None:
+            await message.answer(
+                "❌ Промокод не найден или недействителен\n"
+                "Введите другой промокод или нажмите «Пропустить»"
+            )
+            return
+
+        if promo.first_order_only:
+            # Check if client has any previously paid orders
+            from sqlalchemy import select, func
+            from app.db.models.order import Order as OrderModel, OrderStatus
+            result = await session.execute(
+                select(func.count()).where(
+                    OrderModel.client_id == user.id,
+                    OrderModel.payment_received_at.is_not(None),
+                )
+            )
+            paid_count = result.scalar_one()
+            if paid_count > 0:
+                await message.answer(
+                    "❌ Этот промокод действует только на первый заказ\n"
+                    "Нажмите «Пропустить» чтобы продолжить без скидки"
+                )
+                return
+
+        promo_code = promo.code
+        discount_percent = promo.discount_percent
+        await message.answer(
+            f"✅ Промокод применён — скидка {discount_percent:.0f}%"
+        )
+
+    await _create_order(message, state, session, user, post_commit, promo_code, discount_percent)
+
+
+@router.message(OrderCreateStates.waiting_promo)
+async def promo_unexpected_type(message: Message):
+    await message.answer(
+        "🎟 Введите промокод текстом или нажмите «Пропустить»"
+    )
+
+
+async def _create_order(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    user: User,
+    post_commit: list,
+    applied_promo: str | None,
+    discount_percent,
+):
     from datetime import date
+    data = await state.get_data()
     deadline = date.fromisoformat(data["deadline"]) if data.get("deadline") else None
-    # UTC-aware auction end time (replaces deprecated datetime.utcnow())
+    budget = Decimal(data["budget"])
     auction_end_at = datetime.now(timezone.utc) + timedelta(minutes=120)
 
     order_repo = OrderRepo(session)
@@ -332,6 +409,8 @@ async def got_budget(
         deadline=deadline,
         budget=budget,
         auction_end_at=auction_end_at,
+        applied_promo=applied_promo,
+        discount_percent=discount_percent,
     )
 
     # Save attached files (with caption if operator provided one inline)

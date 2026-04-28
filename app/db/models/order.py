@@ -63,6 +63,11 @@ class Order(Base, TimestampMixin):
     # Acts as idempotency guard — NULL = not yet sent, non-NULL = sent (no retry).
     followup_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Promo: applied promo code and its discount. payment_amount stays = operator's bid;
+    # client actually pays payment_amount * (1 - discount_percent/100).
+    applied_promo: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    discount_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+
     client: Mapped["User"] = relationship("User", foreign_keys=[client_id], back_populates="client_orders")
     operator: Mapped["User | None"] = relationship(
         "User", foreign_keys=[operator_id], back_populates="operator_orders"

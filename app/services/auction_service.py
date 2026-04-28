@@ -5,6 +5,7 @@ from enum import Enum
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.formatters import _money
 from app.config import settings
 from app.db.models.order import Order, OrderStatus
 from app.db.models.order_log import OrderLogAction
@@ -255,17 +256,22 @@ class AuctionService:
         # Notify client and winner operator
         client = await UserRepo(self.session).get_by_id(order.client_id)
         from app.bot.keyboards.order_inline import client_awaiting_payment_kb
+        from app.services.payment_service import PaymentService
+        pay_amount = PaymentService.client_amount(order)
+        promo_line = (
+            f" (скидка {order.discount_percent:.0f}% по промокоду {order.applied_promo})"
+            if order.discount_percent else ""
+        )
         if settings.robokassa_login:
-            from app.services.payment_service import PaymentService
             payment_url = PaymentService().generate_link(
                 invoice_id=order.payment_invoice_id,
-                amount=order.payment_amount,
+                amount=pay_amount,
             )
             if client:
                 self._defer(self.bot.send_message(
                     client.telegram_id,
                     f"✅ Оператор назначен по заявке №{order.id}!\n"
-                    f"Сумма к оплате: {min_bid.amount} ₽\n"
+                    f"Сумма к оплате: {_money(pay_amount)}{promo_line}\n"
                     f"💳 Оплатите по ссылке: {payment_url}",
                     reply_markup=client_awaiting_payment_kb(order.id, show_paid_btn=False),
                 ))
@@ -276,7 +282,7 @@ class AuctionService:
                 self._defer(self.bot.send_message(
                     client.telegram_id,
                     f"✅ Оператор назначен по заявке №{order.id}!\n"
-                    f"Сумма к оплате: {min_bid.amount} ₽\n"
+                    f"Сумма к оплате: {_money(pay_amount)}{promo_line}\n"
                     "⏳ Ожидайте — оператор скоро отправит реквизиты для оплаты",
                     reply_markup=client_awaiting_payment_kb(order.id, show_paid_btn=False),
                 ))

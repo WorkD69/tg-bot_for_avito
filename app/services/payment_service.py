@@ -1,8 +1,12 @@
 import hashlib
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
+from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 
 from app.config import settings
+
+if TYPE_CHECKING:
+    from app.db.models.order import Order
 
 ROBOKASSA_BASE_URL = "https://auth.robokassa.ru/Merchant/Index.aspx"
 
@@ -40,3 +44,18 @@ class PaymentService:
         sig_raw = f"{out_sum}:{inv_id}:{settings.robokassa_pass2}"
         expected = self._md5(sig_raw)
         return expected == signature.upper()
+
+    @staticmethod
+    def client_amount(order: "Order") -> Decimal:
+        """Amount the client actually pays — operator's bid minus promo discount.
+
+        Operator always earns from order.payment_amount (full bid).
+        Discount comes from platform margin.
+        """
+        amount = order.payment_amount
+        if amount and order.discount_percent:
+            factor = 1 - order.discount_percent / 100
+            amount = (amount * Decimal(str(factor))).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+        return amount
