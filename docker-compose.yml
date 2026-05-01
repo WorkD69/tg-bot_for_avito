@@ -42,11 +42,11 @@ services:
       sh -c "alembic upgrade head &&
              python3 run_polling.py"
     healthcheck:
-      test: ["CMD", "python3", "-c", "import sys; sys.exit(0)"]
+      test: ["CMD", "python3", "-c", "import os; exit(0 if any(b'run_polling' in open(f'/proc/{p}/cmdline','rb').read() for p in os.listdir('/proc') if p.isdigit() and os.path.exists(f'/proc/{p}/cmdline')) else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 60s
 
   # caddy: disabled until domain is configured (DOMAIN env var required)
 

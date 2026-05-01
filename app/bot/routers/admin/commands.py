@@ -183,6 +183,9 @@ async def cmd_confirm_payment(message: Message, session: AsyncSession, post_comm
 
     await order_repo.confirm_payment(order)
 
+    from app.services.auction_service import _remove_payment_timeout_job
+    _remove_payment_timeout_job(order_id)
+
     from app.repositories.user_repo import UserRepo
     admin = await UserRepo(session).get_by_telegram_id(message.from_user.id)
     actor_id = admin.id if admin else None

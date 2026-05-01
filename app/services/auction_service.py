@@ -61,16 +61,15 @@ class AuctionService:
         from app.bot.keyboards.order_inline import group_new_order_kb
         from app.bot.keyboards.operator_reply import operator_group_kb
 
-        # Must await this one synchronously: we need msg.message_id to persist.
-        # This is an acceptable pre-commit send — if commit later fails, the group
-        # message is a phantom but the order creation rolled back (very rare edge case).
-        await self.bot.send_message(
-            settings.operator_group_id,
-            f"🆕 Новая заявка №{order.id} создана",
-            reply_markup=group_new_order_kb(order.id),
+        # Both sends are deferred — fire after caller commits so operators never
+        # see a notification for an order that was rolled back.
+        self._defer(
+            self.bot.send_message(
+                settings.operator_group_id,
+                f"🆕 Новая заявка №{order.id} создана",
+                reply_markup=group_new_order_kb(order.id),
+            )
         )
-
-        # Reply keyboard does not need a return value — defer it
         self._defer(
             self.bot.send_message(
                 settings.operator_group_id,
@@ -298,6 +297,8 @@ class AuctionService:
             # Schedule a one-time reminder if operator hasn't sent requisites in 30 min
             _schedule_requisites_reminder(order.id)
 
+        _schedule_payment_timeout(order_id)
+
         logger.info(
             "Order #%d assigned to operator #%d, amount=%s",
             order_id, min_bid.operator_id, min_bid.amount,
@@ -414,6 +415,101 @@ def _schedule_requisites_reminder(order_id: int) -> None:
             order_id,
             exc_info=True,
         )
+
+
+def _schedule_payment_timeout(order_id: int, hours: int = 2) -> None:
+    """Schedule cancellation if client doesn't pay within `hours` hours.
+
+    Idempotent: replace_existing=True. Job itself re-checks status before acting.
+    Never raises — scheduling failure must not break close_auction().
+    """
+    from datetime import datetime, timezone, timedelta
+    from app.scheduler.setup import scheduler
+
+    try:
+        run_date = datetime.now(timezone.utc) + timedelta(hours=hours)
+        scheduler.add_job(
+            _payment_timeout_cancel,
+            "date",
+            run_date=run_date,
+            args=[order_id],
+            id=f"payment_timeout_{order_id}",
+            replace_existing=True,
+        )
+        logger.info("Payment timeout scheduled for order #%d at %s", order_id, run_date)
+    except Exception:
+        logger.error(
+            "Failed to schedule payment timeout for order #%d — timeout skipped",
+            order_id,
+            exc_info=True,
+        )
+
+
+def _remove_payment_timeout_job(order_id: int) -> None:
+    from app.scheduler.setup import scheduler
+    from apscheduler.jobstores.base import JobLookupError
+
+    try:
+        scheduler.remove_job(f"payment_timeout_{order_id}")
+    except JobLookupError:
+        pass
+
+
+async def _payment_timeout_cancel(order_id: int) -> None:
+    """APScheduler job — fires 2 hours after operator assignment.
+
+    Cancels the order if client still hasn't paid (payment_received_at IS NULL
+    and status is still awaiting_payment). Idempotent.
+    """
+    from app.db.engine import AsyncSessionFactory
+    from app.bot.instance import bot
+    from app.repositories.user_repo import UserRepo
+
+    async with AsyncSessionFactory() as session:
+        try:
+            order_repo = OrderRepo(session)
+            order = await order_repo.get_by_id_for_update(order_id)
+            if not order:
+                return
+            if order.status != OrderStatus.awaiting_payment or order.payment_received_at:
+                # Already paid or already resolved — no action needed
+                logger.info("payment_timeout: order #%d already resolved, skipping", order_id)
+                return
+
+            await order_repo.cancel(order, "system")
+            await order_repo.add_log(
+                order_id=order_id,
+                action=OrderLogAction.cancelled,
+                detail="Payment timeout — 2 hours without payment",
+            )
+
+            client_id = order.client_id
+            operator_id = order.operator_id
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            logger.exception("_payment_timeout_cancel failed for order #%d", order_id)
+            return
+
+    # Notify after commit
+    try:
+        async with AsyncSessionFactory() as _s:
+            client = await UserRepo(_s).get_by_id(client_id)
+            operator = await UserRepo(_s).get_by_id(operator_id) if operator_id else None
+        if client:
+            await bot.send_message(
+                client.telegram_id,
+                f"⏰ Заявка №{order_id} отменена — оплата не поступила в течение 2 часов\n"
+                "Создайте новую заявку когда будете готовы",
+            )
+        if operator:
+            await bot.send_message(
+                operator.telegram_id,
+                f"⏰ Заявка №{order_id} автоматически отменена — клиент не оплатил в течение 2 часов",
+            )
+        logger.info("payment_timeout: order #%d cancelled, notifications sent", order_id)
+    except Exception:
+        logger.exception("_payment_timeout_cancel: notification failed for order #%d", order_id)
 
 
 async def _remind_operator_requisites(order_id: int) -> None:

@@ -49,10 +49,6 @@ class Order(Base, TimestampMixin):
     payment_invoice_id: Mapped[str | None] = mapped_column(
         String(64), unique=True, nullable=True
     )
-    # Kept for DB schema compatibility — no longer written or read by the application.
-    # Column exists in migrations 0001+; removing it requires a new migration with op.drop_column.
-    group_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-
     # Payment tracking flags (no new statuses — extra fields only)
     payment_received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     payment_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
