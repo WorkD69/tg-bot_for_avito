@@ -1,3 +1,4 @@
+import html
 import logging
 
 from aiogram import F, Router
@@ -93,7 +94,7 @@ async def send_operator_message(message: Message, state: FSMContext, session: As
     ]])
     post_commit.append(bot.send_message(
         client.telegram_id,
-        f"💬 Сообщение от оператора по заявке №{order_id}:\n\n{message.text}",
+        f"💬 Сообщение от оператора по заявке №{order_id}:\n\n{html.escape(message.text)}",
         reply_markup=reply_btn,
     ))
 
@@ -162,7 +163,7 @@ async def send_requisites_done(message: Message, state: FSMContext, session: Asy
         client.telegram_id,
         f"💳 Реквизиты для оплаты заявки №{order_id}\n"
         f"Сумма: {_money(order.payment_amount)}\n\n"
-        f"{message.text}\n\n"
+        f"{html.escape(message.text)}\n\n"
         "После оплаты нажмите «Я оплатил»\n\n"
         f"❓ Возникли вопросы по оплате — {_cfg.support_handle}",
         reply_markup=client_awaiting_payment_kb(order_id, show_paid_btn=True),
@@ -303,7 +304,7 @@ async def counter_offer_done(message: Message, state: FSMContext, session: Async
     except (ValueError, InvalidOperation):
         await message.answer("❌ Первым словом укажите положительную сумму, например: «3700 Минимальная стоимость»:")
         return
-    extra_comment = parts[1].strip() if len(parts) > 1 else ""
+    extra_comment = html.escape(parts[1].strip()) if len(parts) > 1 else ""
 
     data = await state.get_data()
     order_id: int = data["order_id"]

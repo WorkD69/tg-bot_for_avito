@@ -25,20 +25,30 @@ async def handle_unhandled_error(event: ErrorEvent, bot: Bot) -> bool:
     # Also log locally so it appears in docker-compose logs
     logger.exception("Unhandled exception in update %s", event.update.update_id)
 
+    import html as _html
     short_tb = tb_text[-3000:]  # keep the tail — most relevant part
     text = (
         f"🚨 <b>Необработанная ошибка</b>\n\n"
-        f"<pre>{short_tb}</pre>"
+        f"<pre>{_html.escape(short_tb)}</pre>"
     )
 
     try:
-        await bot.send_message(
-            settings.admin_telegram_id,
-            text,
-            parse_mode="HTML",
-        )
+        from app.db.engine import AsyncSessionFactory
+        from app.db.models.user import UserRole
+        from app.repositories.user_repo import UserRepo
+        async with AsyncSessionFactory() as _s:
+            admins = await UserRepo(_s).get_by_role(UserRole.admin)
+        for admin in admins:
+            try:
+                await bot.send_message(admin.telegram_id, text, parse_mode="HTML")
+            except Exception:
+                pass
     except Exception:
-        pass  # If we can't even notify the admin, just swallow
+        # Fallback to single admin if DB is unavailable
+        try:
+            await bot.send_message(settings.admin_telegram_id, text, parse_mode="HTML")
+        except Exception:
+            pass
 
     # Inform the user so they don't think the bot is frozen
     update = event.update

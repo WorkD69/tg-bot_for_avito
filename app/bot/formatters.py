@@ -1,8 +1,16 @@
+import html as _html
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from app.db.models.message import MessageDirection
 from app.db.models.order import Order, OrderStatus
+
+
+def _e(text: str | None) -> str:
+    """Escape user-generated text for HTML parse mode."""
+    if text is None:
+        return ""
+    return _html.escape(str(text))
 
 MSK = ZoneInfo("Europe/Moscow")
 
@@ -41,11 +49,11 @@ def _history_lines(order: Order) -> list[str]:
     if order.comment:
         for part in order.comment.split("\n---\n"):
             ts, text = _parse_comment_ts(part)
-            lines.append(f"[{ts}] 👤 Клиент (комментарий): {text}")
+            lines.append(f"[{ts}] 👤 Клиент (комментарий): {_e(text)}")
     for msg in (order.messages or []):
         ts = msg.created_at.astimezone(MSK).strftime("%d.%m.%Y %H:%M")
         icon = "👤 Клиент" if msg.direction == MessageDirection.client_to_operator else "🔧 Оператор"
-        lines.append(f"[{ts}] {icon}: {msg.text}")
+        lines.append(f"[{ts}] {icon}: {_e(msg.text)}")
     # Limit history to last 10 entries to keep card readable
     return lines[-10:]
 
@@ -60,9 +68,9 @@ def format_order_card(order: Order, is_admin: bool = False, viewer_id: int | Non
     """
     client = order.client
     if is_admin:
-        client_name = f"@{client.username}" if client.username else client.full_name
+        client_name = _e(f"@{client.username}" if client.username else client.full_name)
     else:
-        client_name = client.full_name
+        client_name = _e(client.full_name)
 
     deadline = order.deadline.strftime("%d.%m.%Y") if order.deadline else "—"
     auction_end = _msk(order.auction_end_at)
@@ -96,7 +104,7 @@ def format_order_card(order: Order, is_admin: bool = False, viewer_id: int | Non
         if is_admin:
             # Admin sees all bids with amounts and names
             for bid in sorted(order.bids, key=lambda b: b.amount):
-                op_name = (
+                op_name = _e(
                     f"@{bid.operator.username}" if bid.operator.username else bid.operator.full_name
                 )
                 lines.append(f"  • {op_name}: {_money(bid.amount)}")
@@ -122,7 +130,7 @@ def format_order_card(order: Order, is_admin: bool = False, viewer_id: int | Non
         lines.append("📝 Заметки:")
         for note in order.notes[-3:]:  # last 3 notes
             ts = note.created_at.astimezone(MSK).strftime("%d.%m %H:%M")
-            lines.append(f"  [{ts}] {note.text}")
+            lines.append(f"  [{ts}] {_e(note.text)}")
 
     return "\n".join(lines)
 

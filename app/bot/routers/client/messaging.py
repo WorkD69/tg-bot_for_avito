@@ -1,3 +1,4 @@
+import html
 import logging
 
 from aiogram import F, Router
@@ -89,10 +90,10 @@ async def send_client_message(message: Message, state: FSMContext, session: Asyn
     )
 
     from app.bot.instance import bot
-    client_name = user.full_name
+    client_name = html.escape(user.full_name or "")
     post_commit.append(bot.send_message(
         operator.telegram_id,
-        f"💬 Сообщение от клиента {client_name} по заявке №{order_id}:\n\n{message.text}",
+        f"💬 Сообщение от клиента {client_name} по заявке №{order_id}:\n\n{html.escape(message.text)}",
     ))
 
     await message.answer("✅ Сообщение отправлено оператору")
